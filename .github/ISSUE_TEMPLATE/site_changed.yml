@@ -1,0 +1,80 @@
+name: Site changed / selectors broke
+description: givenchybeauty.com changed something and the parser no longer matches.
+labels: ["site-change"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is the most common way a scraper stops working, and it is worth its
+        own report because the fix is different from a code bug: something on
+        givenchybeauty.com moved.
+
+        Useful to know before filing: unlike some other scrapers in this family,
+        **this site has no JSON-LD anywhere** — `product_parser.py` anchors on
+        URL patterns (`/profil/spieler/{id}`, `/verein/{id}`,
+        `/jumplist/transfers/...`), the site's own CSS class names
+        (`table.items`, `posrela`, `hauptlink`, `data-header__label`), and
+        `schema.org/Person` microdata on player-profile pages only. Which of
+        those broke narrows the fix a lot.
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Which --mode
+      options:
+        - category
+        - product
+        - transfers
+        - player
+        - not sure / more than one
+    validations:
+      required: true
+
+  - type: dropdown
+    id: what_broke
+    attributes:
+      label: What stopped matching
+      options:
+        - Rows (0 rows on a page that visibly has data)
+        - A specific field is null or wrong (price, club, position, fee, ...)
+        - Price coverage dropped below the floor logged in the run output
+        - Pagination stops early or repeats a page
+        - The bot-challenge detector finds nothing on a page that has one
+        - schema.org/Person microdata missing on a player profile
+        - Something else
+    validations:
+      required: true
+
+  - type: input
+    id: url
+    attributes:
+      label: URL
+      description: The exact page URL you ran against.
+      placeholder: "https://www.givenchybeauty.com/us/makeup/lips/"
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence from the page
+      description: |
+        Whichever of these you can get. A capture beats a description.
+
+        - The relevant table row's HTML (right-click the row on the real site
+          -> Copy -> Copy outerHTML), or the output of
+          `--dump-html capture.html` against this URL.
+        - For a field problem: the value you got, and the value on the page.
+        - For a player-profile problem: whether the page has a
+          `itemtype="https://schema.org/Person"` block at all (view source
+          and search for it).
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: >-
+        Whether it reproduces on a second engine, and when it last worked.
