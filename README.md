@@ -262,8 +262,21 @@ Measured through this repo's own engine rather than `curl`, from the same
 address on 2026-09-18: `playwright_scraper.py` against a **local** Chromium,
 with no key, no proxy and no `--cdp-endpoint`, returned **exit 0, 16 rows,
 16/16 priced in USD** for `/us/makeup/lips/` and one complete row for a
-product page. So on that connection, on that day, the paid path was not
-needed at all.
+product page.
+
+And from an address nobody here controls: the `canary` workflow, run on a
+bare **GitHub Actions runner** — a datacentre address, a freshly installed
+Playwright Chromium, no secret configured — scraped the same listing on
+2026-09-18 and reported **16 rows, 16 priced, `status=complete`**, with every
+one of the canary's assertions passing (row count, price coverage, field
+coverage, `sku` uniqueness, and the struck-price guard). The run is public:
+see the [canary
+runs](https://github.com/2scraper/givenchy-scraper/actions/workflows/canary.yml).
+
+Three independent addresses, then — a residential connection by `curl`, the
+same connection through a real browser, and a datacentre runner — and none of
+them needed the paid path for this listing on this day. What that does NOT
+establish is behaviour at a sustained rate, which is a different experiment.
 
 That is not a claim about the site in general, and a different exit did
 behave differently:
