@@ -6,6 +6,36 @@ versions follow SemVer as closely as a CLI toolkit can. A patch release means
 will be called out at the top of its entry rather than left to be discovered
 from a bill or an empty output file.
 
+## [1.0.1] — 2026-09-18
+
+A fix release cut the same day as 1.0.0, because 1.0.0 shipped a workflow
+that fails on checkout.
+
+### Fixed
+
+> **If you took the v1.0.0 source tarball, its `tests` workflow fails
+> immediately.** Cloning `main` was always fine; only the tagged snapshot is
+> affected. Nothing about the scraper itself is different — the parser, the
+> engines and the output are byte-identical between the two tags.
+
+- **`.github/workflows/tests.yml` carried its own inlined copies of two
+  checks that also exist in `.github/ci_checks.py`.** The sample-output copy
+  still imported `Player` and `Transfer`, the row classes this repo replaced
+  with a single `Product` before its first release, so the workflow failed on
+  a schema that is correct. Both steps now call the shipped checker — which
+  also widens the `--help` check from seven entry points to eight — and no
+  python heredocs remain in that workflow.
+
+### Added
+
+- The README now records the canary's first live run: a bare GitHub Actions
+  runner, a freshly installed Playwright Chromium and no secret configured
+  scraped `/us/makeup/lips/` and reported 16 rows, 16 priced,
+  `status=complete`, with every canary assertion passing. That is a third
+  independent address behind the "the paid path is not required" claim,
+  alongside a residential `curl` and the same connection through a real
+  browser.
+
 ## [1.0.0] — 2026-09-18
 
 First release. Scrapes givenchybeauty.com — a Salesforce B2C Commerce
@@ -104,4 +134,5 @@ Each is encoded in the parser with the measurement that found it:
   `--pages > 1` was passed by a caller that built its own args object.
   Caught by this repo's own suite.
 
+[1.0.1]: https://github.com/2scraper/givenchy-scraper/releases/tag/v1.0.1
 [1.0.0]: https://github.com/2scraper/givenchy-scraper/releases/tag/v1.0.0

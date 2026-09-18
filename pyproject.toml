@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "givenchy-scraper"
-version = "1.0.0"
+version = "1.0.1"
 description = "Givenchy Beauty scraper: product listings and product pages from givenchybeauty.com, as JSON and CSV."
 readme = "README.md"
 license = "MIT"
