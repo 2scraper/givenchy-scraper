@@ -1,5 +1,13 @@
 # givenchy-scraper
 
+[![release](https://img.shields.io/github/v/release/2scraper/givenchy-scraper?sort=semver)](https://github.com/2scraper/givenchy-scraper/releases)
+[![tests](https://github.com/2scraper/givenchy-scraper/actions/workflows/tests.yml/badge.svg)](https://github.com/2scraper/givenchy-scraper/actions/workflows/tests.yml)
+[![canary](https://github.com/2scraper/givenchy-scraper/actions/workflows/canary.yml/badge.svg)](https://github.com/2scraper/givenchy-scraper/actions/workflows/canary.yml)
+[![Python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/)
+[![licence](https://img.shields.io/badge/licence-MIT-lightgrey)](LICENSE)
+[![engines](https://img.shields.io/badge/engines-Playwright%20%7C%20Selenium%20%7C%20pyppeteer%20%7C%20CDP%20%7C%20Scraper%20API-informational)](#what-it-reads)
+[![runs without an account](https://img.shields.io/badge/runs%20without%20an%20account-yes-brightgreen)](#blocks-and-what-the-paid-products-buy)
+
 Scrapes product data from **givenchybeauty.com** — a Salesforce B2C Commerce
 (Demandware) storefront — into one row per product, as JSON and CSV. Three
 browser engines plus a browserless HTTP client, one parser, one row schema.
