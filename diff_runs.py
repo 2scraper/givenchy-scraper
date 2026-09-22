@@ -110,18 +110,34 @@ def diff_rows(old: List[dict], new: List[dict]) -> dict:
         }
         if not field_changes:
             continue
-        entry = {"sku": sku, "title": after.get("title"),
-                 "changes": field_changes}
         # A price difference that arrives WITH a price_source difference is
-        # our two instruments disagreeing, not the shelf price moving. It
-        # goes in its own bucket and --fail-on-change ignores it.
-        if "price" in field_changes and \
-                before.get("price_source") != after.get("price_source"):
-            entry["price_source"] = {"old": before.get("price_source"),
-                                     "new": after.get("price_source")}
-            source_changed.append(entry)
-        else:
-            changed.append(entry)
+        # our two instruments disagreeing, not the shelf price moving — so it
+        # is routed away from `changed` and --fail-on-change ignores it.
+        #
+        # ONLY the price fields are routed. The first version of this moved
+        # the WHOLE row, which meant a product going out of stock, being
+        # renamed or losing its discount was silently ignored whenever the
+        # price happened to be read through a different instrument in the
+        # same pair of runs. An external audit reproduced exactly that:
+        # price 10->11, price_source tile-text->jsonld, availability
+        # InStock->OutOfStock, title Old->New, and `changed` came back empty.
+        # A stock change is never an artefact of how we read the price.
+        instrument_moved = (before.get("price_source") != after.get("price_source"))
+        PRICE_FIELDS = ("price", "currency")
+        priced = {f: v for f, v in field_changes.items() if f in PRICE_FIELDS}
+        material = {f: v for f, v in field_changes.items() if f not in PRICE_FIELDS}
+
+        if priced and instrument_moved:
+            source_changed.append({
+                "sku": sku, "title": after.get("title"), "changes": priced,
+                "price_source": {"old": before.get("price_source"),
+                                 "new": after.get("price_source")}})
+        elif priced:
+            material.update(priced)
+
+        if material:
+            changed.append({"sku": sku, "title": after.get("title"),
+                            "changes": material})
 
     return {
         "added": added,

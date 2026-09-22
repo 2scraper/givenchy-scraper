@@ -9,12 +9,13 @@ body:
         own report because the fix is different from a code bug: something on
         givenchybeauty.com moved.
 
-        Useful to know before filing: unlike some other scrapers in this family,
-        **this site has no JSON-LD anywhere** — `product_parser.py` anchors on
-        URL patterns (`/profil/spieler/{id}`, `/verein/{id}`,
-        `/jumplist/transfers/...`), the site's own CSS class names
-        (`table.items`, `posrela`, `hauptlink`, `data-header__label`), and
-        `schema.org/Person` microdata on player-profile pages only. Which of
+        Useful to know before filing: **where the data lives depends on the page
+        kind**. A category listing has no JSON-LD at all and every row comes off
+        the tile's own attributes (`data-pid`, `data-gtm`, the price
+        microdata). A product page on a priced locale publishes one complete
+        JSON-LD `Product` and that is primary; on `int/en` and `ru` there is
+        none and there is no price to read. Everything else anchors on the
+        theme's class names (`giv-ProductTile-*`, `pdp__*`). Saying which of
         those broke narrows the fix a lot.
 
   - type: dropdown
@@ -40,7 +41,7 @@ body:
         - Price coverage dropped below the floor logged in the run output
         - Pagination stops early or repeats a page
         - The bot-challenge detector finds nothing on a page that has one
-        - schema.org/Person microdata missing on a player profile
+        - JSON-LD missing on a product page of a priced locale
         - Something else
     validations:
       required: true

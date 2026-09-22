@@ -1489,12 +1489,12 @@ def test_readiness_wait():
         return count, sleep, state
 
     count, sleep, st = fake_driver([0, 1, 4])
-    seen = page_flow.wait_for_count(count, sleep, "table.items tbody tr", 4, 20000)
+    seen = page_flow.wait_for_count(count, sleep, "div.productTile-wrapper", 4, 20000)
     ok &= check("returns as soon as the minimum is reached", seen == 4)
     ok &= check("and stops polling there rather than spending the budget",
                 st["polls"] == 3 and st["slept"] == 500)
     ok &= check("it polls the selector it was handed, not a hardcoded one",
-                set(st["selectors"]) == {"table.items tbody tr"})
+                set(st["selectors"]) == {"div.productTile-wrapper"})
 
     count, sleep, st = fake_driver([7])
     seen = page_flow.wait_for_count(count, sleep, "x", 4, 20000)
@@ -1703,6 +1703,72 @@ def test_finish_run():
     return ok
 
 
+def test_attempt_record():
+    group("every run leaves a record of the attempt, even one that wrote nothing")
+    ok = True
+    # REGRESSION, external audit 2026-09-18: after a blocked run the sidecar
+    # still said `status=complete, products=1` from the PREVIOUS run, so a
+    # consumer reading files rather than exit codes read yesterday's success
+    # as today's. §9's rule (a failed run writes no `meta.json`, so a good
+    # dataset is never contradicted) is kept; the attempt record answers the
+    # other question.
+    with tempfile.TemporaryDirectory() as d:
+        prefix = os.path.join(d, "run")
+        finish_run([Product(sku="A", price=1.0)], prefix, "json", False,
+                   blocked=False, stop_reason="completed", pages_requested=1,
+                   pages_completed=1, start_url="u", final_url="u", mode="category")
+        rc = finish_run([], prefix, "json", False, blocked=True,
+                        stop_reason="blocked_Akamai", pages_requested=1,
+                        pages_completed=0, start_url="u", final_url="u",
+                        mode="category")
+        meta = json.load(open(prefix + ".meta.json", encoding="utf-8"))
+        attempt = json.load(open(prefix + ".attempt.json", encoding="utf-8"))
+        ok &= check("the blocked run still returns EXIT_BLOCKED", rc == EXIT_BLOCKED)
+        ok &= check("meta.json keeps describing the dataset that IS on disk",
+                    meta["status"] == "complete" and meta["products"] == 1)
+        ok &= check("the attempt record says THIS run failed",
+                    attempt["attempt_status"] == "failed")
+        ok &= check("...and says no data was written, which is what a "
+                    "freshness check needs", attempt["data_updated"] is False)
+        ok &= check("...and records that it was blocked", attempt["blocked"] is True)
+
+    # A run that writes data marks the attempt as having updated it.
+    with tempfile.TemporaryDirectory() as d:
+        prefix = os.path.join(d, "run")
+        finish_run([Product(sku="A", price=1.0)], prefix, "json", False,
+                   blocked=False, stop_reason="completed", pages_requested=1,
+                   pages_completed=1, start_url="u", final_url="u", mode="category")
+        attempt = json.load(open(prefix + ".attempt.json", encoding="utf-8"))
+        ok &= check("a successful attempt records data_updated=True",
+                    attempt["data_updated"] is True
+                    and attempt["attempt_status"] == "complete")
+    return ok
+
+
+def test_retry_floor():
+    group("--retries can never mean zero attempts")
+    ok = True
+    # REGRESSION, external audit 2026-09-18: `--retries 0` made the fetch loop
+    # `range(1, 1)` -- zero iterations -- and the run then reported an empty
+    # page it had never requested (exit 4, a 39-byte document, no navigation).
+    # Read the FILES, not imported modules: this group must run in the
+    # offline job where no engine library is installed at all.
+    for name in ("playwright_scraper.py", "puppeteer_scraper.py",
+                 "selenium_scraper.py"):
+        src = open(os.path.join(REPO_ROOT, name), encoding="utf-8").read()
+        ok &= check("%s floors the attempt loop at one" % name,
+                    "range(1, max(1, args.retries) + 1)" in src)
+        ok &= check("%s rejects a sub-1 --retries at the argparse boundary" % name,
+                    "_positive_int" in src)
+    # The Scraper API client counts retries the other way round (extra tries
+    # after the first), so it has no floor to assert -- but it must still
+    # refuse a negative value.
+    sac = open(os.path.join(REPO_ROOT, "scraper_api_client.py"), encoding="utf-8").read()
+    ok &= check("scraper_api_client validates its numeric arguments too",
+                "_positive_int" in sac)
+    return ok
+
+
 def test_diff():
     group("diff_runs: added / removed / changed / read-differently, keyed on sku")
     ok = True
@@ -1783,6 +1849,27 @@ def test_diff():
                     [{"sku": "P9", "price": 50.0, "price_source": "jsonld"}],
                     [{"sku": "P9", "price": 50.5, "price_source": "jsonld"}]
                 )["changed"]) == 1)
+
+    # REGRESSION, found by an external audit 2026-09-18: routing the WHOLE
+    # row into `source_changed` meant a product going out of stock, being
+    # renamed or losing its discount was silently ignored whenever the price
+    # happened to be read through a different instrument in the same pair of
+    # runs. Only the PRICE fields may be routed; a stock change is never an
+    # artefact of how the price was read.
+    old_mixed = [{"sku": "P7", "price": 10.0, "price_source": "tile-text",
+                  "availability": "InStock", "title": "Old"}]
+    new_mixed = [{"sku": "P7", "price": 11.0, "price_source": "jsonld",
+                  "availability": "OutOfStock", "title": "New"}]
+    r_mixed = diff_rows(old_mixed, new_mixed)
+    ok &= check("a stock/title change riding along with an instrument change "
+                "is still reported as a material change",
+                len(r_mixed["changed"]) == 1
+                and set(r_mixed["changed"][0]["changes"]) == {"availability", "title"})
+    ok &= check("...while only the price half goes to source_changed",
+                len(r_mixed["source_changed"]) == 1
+                and set(r_mixed["source_changed"][0]["changes"]) == {"price"})
+    ok &= check("...so --fail-on-change would fire on it",
+                bool(r_mixed["added"] or r_mixed["removed"] or r_mixed["changed"]))
 
     # Two showcase-locale runs: every price is None on both sides, which is
     # correct and must not read as a change.
@@ -2146,7 +2233,7 @@ def test_engine_parity(skips):
         try:
             session, target = build()
             solved = mod.handle_captcha_if_present(
-                session, FakeArgs(), "table.items tbody tr")
+                session, FakeArgs(), "div.productTile-wrapper")
             return solved, read(target)
         finally:
             mod.solve_recaptcha, mod.time.sleep = saved_solve, saved_sleep
@@ -3027,6 +3114,47 @@ REMOVED_ENGINE_FLAGS = ("--antidetect", "--marketplace", "--country", "--details
 ENGINE_FILES = ("playwright_scraper.py", "puppeteer_scraper.py", "selenium_scraper.py")
 
 
+def test_no_sibling_site_vocabulary():
+    group("no vocabulary from a SIBLING repo's site survives in shipped files")
+    ok = True
+    # An external audit on 2026-09-18 found this repo still describing
+    # Transfermarkt in CONTRIBUTING.md, the issue template, the Dockerfile
+    # quickstart and a canary error message -- the scaffold was copied from
+    # that repo and the first sweep used too narrow a word list. Documentation
+    # drift of this kind is not cosmetic: it reached issue triage, the Docker
+    # example a reader would paste, and the automated-review prompt.
+    #
+    # Words chosen to be unambiguous: each names a THING on the sibling's site
+    # that has no meaning on this one. Generic words ("player", "ranking") are
+    # deliberately absent -- they produce false positives and a check that
+    # cries wolf gets allowlisted into uselessness.
+    BANNED = ("spieler", "verein", "hauptlink", "posrela", "table.items",
+              "market-values", "club-squad", "transfer_id", "marktwert",
+              "schema.org/Person")
+    # This file names them in order to ban them, exactly as the family's
+    # banned-phrase check exempts itself.
+    SELF = os.path.basename(__file__)
+    offenders = {}
+    for root, dirs, files in os.walk(REPO_ROOT):
+        dirs[:] = [d for d in dirs
+                   if d not in ("captures", "__pycache__", ".git", ".venv")]
+        for name in files:
+            if name == SELF or not name.endswith((".py", ".md", ".yml", ".yaml")) \
+                    and name != "Dockerfile":
+                continue
+            path = os.path.join(root, name)
+            try:
+                text = open(path, encoding="utf-8").read().lower()
+            except (OSError, UnicodeDecodeError):
+                continue
+            hits = sorted({w for w in BANNED if w in text})
+            if hits:
+                offenders[os.path.relpath(path, REPO_ROOT)] = hits
+    ok &= check("no shipped file carries a sibling site's vocabulary (%s)"
+                % (offenders if offenders else "clean"), not offenders)
+    return ok
+
+
 def test_wording():
     group("wording and removed flags")
     ok = True
@@ -3650,6 +3778,8 @@ def main() -> int:
     ok &= test_output_contract()
     ok &= test_writers()
     ok &= test_finish_run()
+    ok &= test_attempt_record()
+    ok &= test_retry_floor()
     ok &= test_diff()
     ok &= test_captcha()
     ok &= test_remote_api_error()
@@ -3665,6 +3795,7 @@ def main() -> int:
     ok &= test_browser_profile_client()
     ok &= test_scraper_api_client()
     ok &= test_no_capture_leaks()
+    ok &= test_no_sibling_site_vocabulary()
     ok &= test_wording()
     ok &= test_fingerprint_application()
     ok &= test_fingerprint_client_reads_env()

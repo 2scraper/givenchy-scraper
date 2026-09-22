@@ -20,6 +20,12 @@ canary_run.*
 # Written on purpose when a page yields nothing or comes back blocked, and by
 # --dump-html on success too. Large, and stale within hours.
 *_debug.html
+# --dump-html writes wherever it is told, and a raw page dump can carry the
+# session that fetched it (SECURITY.md says so). An audit pointed out that
+# `--dump-html capture.html` landed in a name nothing here matched, so:
+*.html
+!landing/*.html
+artifacts/
 *_debug.png
 *.html.page*
 

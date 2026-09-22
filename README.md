@@ -49,9 +49,10 @@ python3 playwright_scraper.py --category makeup/lips --site-locale gb
 python3 playwright_scraper.py --mode product \
     --url https://www.givenchybeauty.com/us/p/fantasque-P000170.html
 
-# no local browser at all, over 2Captcha's Scraper API
-python3 scraper_api_client.py --key "$TWOCAPTCHA_KEY" \
-    --category makeup/lips --site-locale us
+# no local browser at all, over 2Captcha's Scraper API.
+# The key comes from .env — NOT from the command line: argv is readable by
+# anyone who can run `ps`, and it lands in shell history.
+python3 scraper_api_client.py --category makeup/lips --site-locale us
 ```
 
 The other two engines take the same flags:

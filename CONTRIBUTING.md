@@ -41,26 +41,26 @@ whether or not the check caught it.
 ## Reporting a site change
 
 Givenchy Beauty changing its markup is the normal way this stops working, and
-it has its own issue template. Worth knowing before filing: this site
-publishes **no JSON-LD anywhere** (checked on every page kind this repo
-covers — a ranking page, a squad page, a transfer list, a player profile).
-So there is no "which of two paths broke" question the way an e-commerce
-scraper has one; every field here comes straight off the DOM, anchored on
-one of three kinds of hook:
+it has its own issue template. Worth knowing before filing: **where the data
+lives depends on the page kind**, and the two halves break differently.
 
-1. **URL patterns** — `/profil/spieler/{id}`, `/verein/{id}`,
-   `/jumplist/transfers/spieler/{id}/transfer_id/{id}`. A contract with
-   search engines, and the most durable anchor this repo has.
-2. **`schema.org/Person` microdata** on a player's own profile header
-   (`itemprop="birthDate"`, `"nationality"`, `"height"`, `"affiliation"`) —
-   real structured data, just not JSON-LD.
-3. **The site's own class names** everywhere else (`data-header__label`,
-   `posrela`, `hauptlink`, `table.items`) or column position within a row.
-   The least durable of the three, and where a markup change is most likely
-   to land.
+1. **A category listing publishes no JSON-LD at all.** Every row comes off
+   the tile's own attributes — `data-pid` (the variant id), the `data-gtm`
+   JSON blob, and the price microdata (`span.value[itemprop=price][content]`
+   plus `meta[itemprop=priceCurrency]`). A listing regression is almost
+   always one of those.
+2. **A product page on a priced locale publishes one complete JSON-LD
+   `Product`**, and it is primary there: `offers.price`,
+   `offers.priceCurrency`, `sku`. On the showcase locales (`int/en`, `ru`)
+   there is none, and the DOM supplies name, size and breadcrumb with no
+   price to read.
+3. **The site's own class names** (`giv-ProductTile-*`, `pdp__*`,
+   `price-container.set-price-volume`) everywhere else. The least durable of
+   the three, and where a markup change is most likely to land.
 
 If you are reporting a change, saying which of these three broke (and for
-(3), which selector) narrows the fix a lot.
+(3), which selector) narrows the fix a lot. `price_source` on the affected
+row already tells you which instrument read the price.
 
 `--dump-html PATH` writes the exact bytes the parser was given, on success as
 well as failure, and a run that finds nothing writes a dump and a screenshot
@@ -84,7 +84,7 @@ rather than silently regressing:
 - **A club or player title attribute can be doubled on this site's own
   markup** — `title="Without ClubWithout Club"` is real, observed markup for
   the "Without Club" free-agent placeholder, not a scraping bug. Read the
-  TEXT-bearing anchor (`td.hauptlink a`), not the first matching link in the
+  TEXT-bearing anchor (the tile's own title link), not the first matching link in the
   cell (which can be an image-only wrapper with an empty text node), and let
   `_detitle()` catch the doubling as a second line of defence.
 - **A listing's pagination is robots-disallowed on this site**, so
@@ -158,7 +158,7 @@ site. This project only reads pages an anonymous visitor is served.
 ## Scope
 
 This repo scrapes **public pages** on Givenchy Beauty: product listing
-rankings, club squads, the latest-transfers listing and individual player
+category listings and individual product
 profiles, exactly as an anonymous visitor is served them. Out of scope:
 anything behind a login, anything that submits a form, and anything that
 defeats a protection rather than passing it the way an ordinary browser
