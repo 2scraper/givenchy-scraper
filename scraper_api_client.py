@@ -414,6 +414,29 @@ def main() -> int:
         return EXIT_REMOTE_API_ERROR
 
 
+def _non_negative(value):
+    """argparse type for a count that may be zero but never negative."""
+    n = int(value)
+    if n < 0:
+        raise argparse.ArgumentTypeError(f"must be 0 or greater, got {n}")
+    return n
+
+
+def _positive_int(value):
+    """argparse type for a count that must be at least 1.
+
+    `--retries 0` used to mean ZERO fetch attempts, because the loop was
+    `range(1, retries + 1)`: the run then reported an empty page it had never
+    requested. An external audit reproduced it on 2026-09-18 (exit 4, a
+    39-byte document, no navigation). The loop now floors at one attempt and
+    this type stops the confusing value being accepted in the first place.
+    """
+    n = int(value)
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"must be 1 or greater, got {n}")
+    return n
+
+
 def parse_args():
     p = argparse.ArgumentParser(
         description="Givenchy Beauty scraper -- 2captcha Scraper API edition "
@@ -439,7 +462,7 @@ def parse_args():
                         "makeup/lips.")
     p.add_argument("--site-locale", default="us", choices=list(LOCALES),
                    help="Locale path prefix on www.givenchybeauty.com.")
-    p.add_argument("--pages", type=int, default=1,
+    p.add_argument("--pages", type=_positive_int, default=1,
                    help="Listing pages to crawl. Checked per run against "
                         "page 1's own next-link (page_flow.pagination_is_"
                         "addressable). A listing is one page on this site: "
@@ -458,18 +481,20 @@ def parse_args():
                       help="Wait until this string appears on the page. Only useful with "
                            "--cdp-url -- a plain fetch already returns complete HTML here.")
     wait.add_argument("--wait-element", default=None,
-                      help="Wait until this CSS selector is visible, e.g. 'table.items'")
+                      help="Wait until this CSS selector is visible, e.g. "
+                        "'div.productTile-wrapper'")
     wait.add_argument("--wait-state", choices=["load", "domcontentloaded"], default=None,
                       help="Wait for a page load state instead of specific content")
     p.add_argument("--allow-empty", action="store_true",
                    help="Write output files even when 0 rows were found.")
-    p.add_argument("--retries", type=int, default=1,
+    p.add_argument("--retries", type=_positive_int, default=1,
                    help="Extra attempts if a bot-challenge page comes back. Each attempt "
                         "is a separate billable task, so this defaults to 1.")
     p.add_argument("--retry-delay", type=int, default=10, help="Seconds between retries")
     p.add_argument("--dump-html", default=None,
                    help="Save the exact HTML the parser is given (always, even on success)")
     args = p.parse_args()
+    key_on_argv = args.key is not None
     # This client uses --key rather than --twocaptcha-key, so the env
     # mapping is spelled out instead of defaulted -- same pattern this
     # family's mediamarkt-scraper uses for its own scraper_api_client.py.
@@ -479,6 +504,15 @@ def parse_args():
         "GIVENCHY_URL": "url",
     })
 
+    if key_on_argv:
+        # CLAUDE.md §8: credentials never reach argv. Warn rather than refuse,
+        # because refusing would break a caller mid-pipeline -- but say it
+        # plainly, because `ps` makes this readable to every other user on the
+        # box and it lands in shell history.
+        logger.warning("--key puts your API key in this process's argv, where "
+                       "`ps` can read it, and in your shell history. Put it in "
+                       ".env as TWOCAPTCHA_KEY instead; env_config loads it "
+                       "automatically.")
     if not args.key:
         p.error("no --key given, and TWOCAPTCHA_KEY is not set in the environment or in .env.")
 

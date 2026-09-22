@@ -8,7 +8,7 @@ scrapers, regardless of what URL was requested (category hub, product page,
 sign-in, checkout, anything) — this is deliberate, not scoped to any one
 page. If Givenchy Beauty renders a reCAPTCHA/Turnstile challenge anywhere —
 this fires. Live research for this repo (2026-09-10, one proxied fetch each
-of a ranking page, a player profile, a squad page and a transfer list, all
+of a category listing and a product page, all
 served without any challenge or 403) found none, but that is a much smaller
 sample than the family's other members ran before writing this note — see
 the closing section of this file for what that does and does not license.

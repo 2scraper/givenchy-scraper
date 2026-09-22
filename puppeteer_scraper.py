@@ -428,7 +428,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     for block_attempt in range(block_retries + 1):
         logger.info("Fetching page %d: %s", page_num, url)
         load_failed = False
-        for attempt in range(1, args.retries + 1):
+        for attempt in range(1, max(1, args.retries) + 1):
             try:
                 bridge.run(page.goto(url, {"waitUntil": "domcontentloaded",
                                            "timeout": 60000}))
@@ -671,6 +671,29 @@ def scrape(args) -> int:
                       start_url=args.url, final_url=final_url)
 
 
+def _non_negative(value):
+    """argparse type for a count that may be zero but never negative."""
+    n = int(value)
+    if n < 0:
+        raise argparse.ArgumentTypeError(f"must be 0 or greater, got {n}")
+    return n
+
+
+def _positive_int(value):
+    """argparse type for a count that must be at least 1.
+
+    `--retries 0` used to mean ZERO fetch attempts, because the loop was
+    `range(1, retries + 1)`: the run then reported an empty page it had never
+    requested. An external audit reproduced it on 2026-09-18 (exit 4, a
+    39-byte document, no navigation). The loop now floors at one attempt and
+    this type stops the confusing value being accepted in the first place.
+    """
+    n = int(value)
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"must be 1 or greater, got {n}")
+    return n
+
+
 def parse_args():
     p = argparse.ArgumentParser(description="Givenchy Beauty scraper (pyppeteer edition)")
     p.add_argument("--mode", choices=["category", "product"], default="category",
@@ -689,13 +712,13 @@ def parse_args():
                    help="The locale PATH PREFIX on www.givenchybeauty.com "
                         "(default us). Not --locale, which is the browser's "
                         "own. int/en and ru publish no prices.")
-    p.add_argument("--pages", type=int, default=1,
+    p.add_argument("--pages", type=_positive_int, default=1,
                    help="Accepted for family compatibility; a listing is one "
                         "page on this site (robots-disallowed paging).")
     p.add_argument("--delay", type=float, default=2.0)
-    p.add_argument("--concurrency", type=int, default=1,
+    p.add_argument("--concurrency", type=_positive_int, default=1,
                    help="Ignored in this engine — see playwright_scraper.py.")
-    p.add_argument("--retries", type=int, default=3)
+    p.add_argument("--retries", type=_positive_int, default=3)
     p.add_argument("--retry-delay", type=float, default=2.0)
     p.add_argument("--format", choices=["json", "csv", "both"], default="both")
     p.add_argument("--out", default="givenchy_products")

@@ -5,7 +5,7 @@
 #
 #   docker build -t givenchy-scraper .
 #   docker run --rm -v "$PWD/out:/out" givenchy-scraper \
-#     --mode market-values --pages 2 --out /out/market_values
+#     --category makeup/lips --site-locale us --out /out/givenchy_products
 #
 # Pass --proxy/--twocaptcha-key the same way as running locally, or mount a
 # .env at /app/.env -- nothing here bakes in a credential.

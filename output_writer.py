@@ -40,6 +40,7 @@ Columns that are NOT here, and the measurements that removed them
 
 import csv
 import json
+import os
 from dataclasses import dataclass, asdict, field, fields
 from datetime import datetime, timezone
 from typing import Optional, List, Set, Sequence, Any, Type
@@ -160,9 +161,39 @@ def _csv_value(v: Any) -> Any:
     return v
 
 
+def _atomic_write(path: str, write: "Any") -> None:
+    """Write through a temp file in the same directory, then `os.replace()`.
+
+    Opening the destination directly means a crash, a full disk or a killed
+    process truncates the PREVIOUS good file — which is the one thing this
+    module exists to protect (see `save`: a run that finds nothing writes
+    nothing, precisely so last night's output survives). An external audit
+    pointed out that the writers themselves did not honour that.
+
+    `os.replace` is atomic within a filesystem, and the temp file is created
+    beside the target so it is always the same filesystem.
+    """
+    import tempfile
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=".tmp-",
+                               suffix=os.path.basename(path))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+            write(f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def write_json(rows: Sequence[Any], path: str) -> None:
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump([asdict(r) for r in rows], f, ensure_ascii=False, indent=2)
+    _atomic_write(path, lambda f: json.dump([asdict(r) for r in rows], f,
+                                            ensure_ascii=False, indent=2))
 
 
 def write_csv(rows: Sequence[Any], path: str, row_cls: Type = Product) -> None:
@@ -170,11 +201,14 @@ def write_csv(rows: Sequence[Any], path: str, row_cls: Type = Product) -> None:
     # the first row, so a mode that finds nothing still writes the columns
     # that mode would have used.
     fieldnames = [f.name for f in fields(row_cls)]
-    with open(path, "w", encoding="utf-8", newline="") as f:
+
+    def _write(f):
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for r in rows:
             writer.writerow({k: _csv_value(v) for k, v in asdict(r).items()})
+
+    _atomic_write(path, _write)
 
 
 # Exit code used when a run completes but produced nothing.
@@ -220,9 +254,20 @@ class RemoteAPIError(RuntimeError):
 def write_run_meta(out_prefix: str, meta: dict) -> str:
     """Write a run-metadata sidecar next to the output, return its path."""
     path = f"{out_prefix}.meta.json"
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(meta, f, ensure_ascii=False, indent=2)
+    _atomic_write(path, lambda f: json.dump(meta, f, ensure_ascii=False, indent=2))
     print(f"[+] Wrote run metadata -> {path} (status={meta.get('status')})")
+    return path
+
+
+def write_attempt_meta(out_prefix: str, meta: dict) -> str:
+    """Write the per-attempt record. Always written, even by a run that
+    produced no data — see `finish_run` for why this is a second file rather
+    than a change to the first."""
+    path = f"{out_prefix}.attempt.json"
+    _atomic_write(path, lambda f: json.dump(meta, f, ensure_ascii=False, indent=2))
+    print(f"[+] Wrote attempt record -> {path} "
+          f"(attempt_status={meta.get('attempt_status')}, "
+          f"data_updated={meta.get('data_updated')})")
     return path
 
 
@@ -291,6 +336,38 @@ def finish_run(rows: Sequence[Any], out_prefix: str, fmt: str,
     row_cls = ROW_CLASS_BY_MODE.get(mode, Product)
     rc = save(rows, out_prefix, fmt, allow_empty=allow_empty, row_cls=row_cls)
     wrote_output = bool(rows) or allow_empty
+
+    # `<out>.attempt.json` is written on EVERY run, including one that wrote
+    # no data. `<out>.meta.json` keeps its old meaning — it describes the
+    # dataset currently on disk — and that combination is deliberate:
+    #
+    # §9 says a failed run writes no sidecar, because a "failed" meta.json
+    # sitting beside yesterday's good data would contradict it. True, but an
+    # external audit showed the other half of the hazard: after a blocked
+    # run, `meta.json` still said `status=complete, products=1` from the
+    # PREVIOUS run, so a consumer reading files rather than exit codes reads
+    # yesterday's success as today's. Both are real; one file cannot answer
+    # both questions.
+    #
+    # So: meta.json answers "what is this data?", attempt.json answers "what
+    # happened just now?". A pipeline that wants freshness reads
+    # attempt.json and compares `data_updated`.
+    write_attempt_meta(out_prefix, {
+        "attempt_status": "complete" if (rows and complete) else (
+            "partial" if rows else "failed"),
+        "stop_reason": stop_reason,
+        "blocked": bool(blocked),
+        "data_updated": bool(wrote_output),
+        "products": len(rows),
+        "pages_requested": pages_requested,
+        "pages_completed": pages_completed,
+        "pages_failed": pages_failed or [],
+        "mode": mode,
+        "source": source,
+        "start_url": start_url,
+        "final_url": final_url,
+        "finished_at": datetime.now(timezone.utc).isoformat(),
+    })
 
     if wrote_output:
         status = "complete" if (rows and complete) else (

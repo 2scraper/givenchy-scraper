@@ -124,7 +124,7 @@ jobs:
                    skipped=true
                    code=0
                  fi ;;
-            4)   echo "::error::Ran fine but parsed 0 rows (exit 4) on a page known to have thousands of rankings. The site's markup has probably changed. The HTML dump in the artifacts tells you what the parser actually saw." ;;
+            4)   echo "::error::Ran fine but parsed 0 rows (exit 4) on a listing known to carry products. The site's markup has probably changed. The HTML dump in the artifacts tells you what the parser actually saw." ;;
             5)   echo "::error::Remote API error (exit 5) — a 2captcha product path failed. With a secret configured (cdp=$HAVE_CDP proxy=$HAVE_PROXY) that is the endpoint or the credentials; with neither, nothing should have called a remote API at all and the run log in the artifacts is where to start." ;;
             6)   echo "::error::Partial run (exit 6) — the run stopped early. canary_run.meta.json names which pages failed. A listing here is a SINGLE page, so a partial run means that one page failed after some rows were already merged, not that pagination ran out." ;;
             2)   echo "::error::Bad usage (exit 2) — the workflow's own arguments are wrong, not the site." ;;

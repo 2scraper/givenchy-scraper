@@ -529,7 +529,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         logger.info("Fetching page %d: %s", page_num, url)
         load_failed, exit_failed = False, None
         resp_status, resp_headers = None, None
-        for attempt in range(1, args.retries + 1):
+        for attempt in range(1, max(1, args.retries) + 1):
             try:
                 # The Response is KEPT, not discarded. Until v0.4.1 this
                 # return value was thrown away and `_classify` was called
@@ -645,7 +645,7 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         else:
             logger.info("No rows appeared within %.0fs (%d/%d matched) — if "
                         "this is a genuinely empty page (an exhausted "
-                        "listing, an empty squad), that is the expected "
+                        "listing, a category that lists nothing), that is the expected "
                         "answer.", content_timeout / 1000, seen, ready_count)
         html = _content_when_settled(session.page) or html
 
@@ -959,6 +959,29 @@ def scrape(args) -> int:
                       start_url=args.url, final_url=final_url)
 
 
+def _non_negative(value):
+    """argparse type for a count that may be zero but never negative."""
+    n = int(value)
+    if n < 0:
+        raise argparse.ArgumentTypeError(f"must be 0 or greater, got {n}")
+    return n
+
+
+def _positive_int(value):
+    """argparse type for a count that must be at least 1.
+
+    `--retries 0` used to mean ZERO fetch attempts, because the loop was
+    `range(1, retries + 1)`: the run then reported an empty page it had never
+    requested. An external audit reproduced it on 2026-09-18 (exit 4, a
+    39-byte document, no navigation). The loop now floors at one attempt and
+    this type stops the confusing value being accepted in the first place.
+    """
+    n = int(value)
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"must be 1 or greater, got {n}")
+    return n
+
+
 def parse_args():
     p = argparse.ArgumentParser(description="Givenchy Beauty scraper (Playwright edition)")
     p.add_argument("--mode", choices=["category", "product"], default="category",
@@ -983,17 +1006,17 @@ def parse_args():
                         "is the browser's own locale: this one decides which "
                         "storefront is served, and therefore the currency. "
                         "int/en and ru publish no prices at all.")
-    p.add_argument("--pages", type=int, default=1,
+    p.add_argument("--pages", type=_positive_int, default=1,
                    help="Accepted for family compatibility. This site's "
                         "listing pagination is robots-disallowed, so a "
                         "listing is one page and a value above 1 is reported "
                         "and ignored. See the module docstring.")
     p.add_argument("--delay", type=float, default=2.0, help="Delay between pages, seconds")
-    p.add_argument("--concurrency", type=int, default=1, metavar="N",
+    p.add_argument("--concurrency", type=_positive_int, default=1, metavar="N",
                    help="Accepted for family compatibility and ignored: no "
                         "mode here has a second page to fetch in parallel "
                         "(see CONCURRENCY_CAPABLE_MODES).")
-    p.add_argument("--retries", type=int, default=3,
+    p.add_argument("--retries", type=_positive_int, default=3,
                    help="Attempts per page load before giving up (default 3).")
     p.add_argument("--retry-delay", type=float, default=2.0,
                    help="Seconds before the first retry, doubling thereafter.")

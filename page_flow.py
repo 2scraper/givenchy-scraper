@@ -298,7 +298,7 @@ STATE_POLICY = {
     "content": {"retry": False, "solve": False, "blocked": False},
     "blocked": {"retry": True, "solve": False, "blocked": True},
     "captcha": {"retry": True, "solve": True, "blocked": True},
-    # NOT retried: an out-of-range page or an empty squad URL is a correct
+    # NOT retried: a served category that genuinely lists nothing is a correct
     # answer to the question that was asked.
     "empty": {"retry": False, "solve": False, "blocked": False},
 }

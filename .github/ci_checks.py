@@ -78,7 +78,11 @@ CREDENTIAL_ALLOWED = ("USER:PASS", "user:pass", "ACCOUNT:PASSWORD",
 HEX32 = re.compile(r"\b[0-9a-f]{32}\b")
 HEX32_ALLOWED = ("sha", "hash", "nonce", "example", "md5", "digest", "checksum")
 
-SCANNED_SUFFIXES = (".py", ".md", ".txt", ".yml", ".yaml", ".example")
+SCANNED_SUFFIXES = (".py", ".md", ".txt", ".yml", ".yaml", ".example",
+                    # A committed page dump can carry the session that
+                    # fetched it -- SECURITY.md says so, and this scanner
+                    # used to skip the one extension that carries it.
+                    ".html", ".json", ".csv")
 
 
 def git_ignored(paths):
