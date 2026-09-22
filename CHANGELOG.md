@@ -6,6 +6,31 @@ versions follow SemVer as closely as a CLI toolkit can. A patch release means
 will be called out at the top of its entry rather than left to be discovered
 from a bill or an empty output file.
 
+## [Unreleased]
+
+Fixes from an external audit. No release cut; `main` is ahead of v1.0.1.
+
+Three of them change behaviour for an existing user:
+
+- **`diff_runs --fail-on-change` now fires in cases where it stayed silent.**
+  A row whose price and `price_source` both moved used to be routed wholesale
+  into `source_changed`, taking any other field with it — so a product going
+  out of stock, being renamed or losing its discount was ignored. Only
+  `price`/`currency` are routed now. A pipeline that was green may now go red,
+  and where it does, it was missing a real change.
+- **`--retries 0` is refused instead of silently doing nothing.** It used to
+  make the fetch loop empty, so the run reported a page it had never
+  requested. Scripts passing `0` now fail at argument parsing.
+- **A new `<out>.attempt.json` is written on every run**, including one that
+  wrote no data. `meta.json` keeps its meaning (what the data on disk is);
+  the attempt record says what the last run did, so a blocked run can no
+  longer leave a sidecar implying yesterday's success was fresh.
+
+Also: output files and sidecars are written atomically; `--dump-html` output
+is gitignored and the secret scanner reads `.html`/`.json`/`.csv`; the
+documentation no longer describes a sibling repo's site, with a test to keep
+it that way.
+
 ## [1.0.1] — 2026-09-18
 
 A fix release cut the same day as 1.0.0, because 1.0.0 shipped a workflow
