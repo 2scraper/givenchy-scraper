@@ -88,8 +88,10 @@ fallbacks, not facts about the page, and this parser reads neither — no
 price container means no price and no currency.
 
 **Category paths are not shared between locales.** `/us/makeup/lips/` and
-`/gb/makeup/lips/` both answer 200; `/fr/fr/makeup/lips/` answers **410**.
-Take each locale's paths from its own `sitemap_1-category.xml`.
+`/gb/makeup/lips/` both answer 200; `/fr/fr/makeup/lips/` answers **410**
+(re-measured 2026-10-14). The run reports that as `stop_reason: not_found`
+and exit 5 — not a block, and not an empty category. Take each locale's
+paths from its own `sitemap_1-category.xml`.
 
 ---
 
@@ -228,6 +230,11 @@ listing HTML to be read.
 - **A category can legitimately return zero products.** `/es/…/sets/` and
   `/it/…/sets/` are both served, both HTTP 200, and both list nothing
   (measured 2026-09-17). The run reports exit 4, not a block.
+- **A CSV cell can start with an apostrophe the JSON does not have.** A
+  string cell beginning with `=`, `+`, `-`, `@`, a tab or a line break would
+  be run as a formula by a spreadsheet, so the CSV prefixes it with `'`;
+  the JSON keeps the site's text exactly, and `csv_cells_escaped` in
+  `<out>.meta.json` says how many cells differ. Numbers are never touched.
 - **A listing can serve the same tile twice.** `/gb/makeup/lips/` returned 25
   tiles over 24 distinct ids on 2026-09-18. The extra is deduped on `sku`, so
   the saved row count is one lower than the parsed count — that log line is
@@ -303,9 +310,9 @@ Second, after roughly ten runs through the same profile within an hour on
 `net::ERR_SSL_PROTOCOL_ERROR` and `net::ERR_CONNECTION_CLOSED`, three
 attempts each, while a plain `curl` from this machine fetched the same URL
 in 0.54s with HTTP 200. That is the exit, not the site and not the scraper.
-A run that never loads its page writes **no** `.meta.json` sidecar, which is
-how it is told apart from a genuinely empty category — both exit 4, only one
-of them leaves a sidecar saying so.
+A run that never loads its page exits **5** ("the content was never
+obtained"), not 4: exit 4 is kept for a page that was served and genuinely
+lists nothing. `<out>.attempt.json` names the `stop_reason` either way.
 
 What the paid 2Captcha products actually buy here: volume from many
 addresses (`--proxy`, `--proxy-file proxylist.txt`, `--proxy-sessions`), a
@@ -343,8 +350,8 @@ already refuses that name, and `--proxy-file proxylist.txt` reads it.
 | 1 | crash |
 | 2 | bad usage |
 | 3 | blocked |
-| 4 | zero products |
-| 5 | remote API error (the Fingerprint/Scraper API, not the site) |
+| 4 | zero products on a page that was served (a genuinely empty category) |
+| 5 | the content was never obtained: a load timeout, a dead or unauthenticated proxy, an address that does not exist (HTTP 404/410, `stop_reason: not_found`), or a 2Captcha product call failing |
 | 6 | partial |
 
 Every run writes `<out>.meta.json` beside its output with `status`,

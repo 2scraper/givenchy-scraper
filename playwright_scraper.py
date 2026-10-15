@@ -273,7 +273,7 @@ def _connect_remote(pw, args):
     if getattr(args, "no_autosolve", False):
         # Deliberately NOT enabling it. This exists so a challenge can be met
         # and left unsolved, which is the only way to measure how often one
-        # clears on its own -- the control the family's section 19 requires
+        # clears on its own -- the control required
         # before a solve may be credited with anything. Without it, every
         # challenge this endpoint meets is solved before it can be observed.
         logger.warning("--no-autosolve: Captcha.setAutoSolve NOT enabled. "
@@ -378,7 +378,7 @@ def _content_when_settled(page, attempts: int = 4, pause_ms: int = 700):
 
 
 def handle_captcha_if_present(page, args, ready_selector: str,
-                              proxy=None) -> bool:
+                              proxy=None, budget=None) -> bool:
     """Detect and solve a challenge. True if something was solved.
 
     See captcha_solver.py's closing note: no challenge of this kind was
@@ -393,11 +393,11 @@ def handle_captcha_if_present(page, args, ready_selector: str,
     already_rendered = len(page.query_selector_all(ready_selector))
     when_blocked = getattr(args, "solve_captcha", "when-blocked") == "when-blocked"
 
-    # AWS WAF first: it is the one challenge this site has actually been
-    # measured serving (2026-09-16), and it is unambiguous when present --
-    # `window.gokuProps` appears on nothing else. The reCAPTCHA detectors
-    # below stay wired for the same "do not narrow detection to what has
-    # been seen" reason they were wired originally.
+    # AWS WAF first: it is unambiguous when present -- `window.gokuProps`
+    # appears on nothing else. The challenge this site was actually measured
+    # serving is Akamai's `sec-cpt` interstitial, which carries no widget
+    # and is waited out rather than solved (see page_flow). The detectors
+    # here stay wired so a challenge that does carry a widget is recognised.
     challenge = detect_aws_waf(html, page.url)
     if challenge is None:
         html_challenge = detect_recaptcha_v3(html, page.url)
@@ -442,7 +442,7 @@ def handle_captcha_if_present(page, args, ready_selector: str,
                                "continuing with whatever the page holds.", e)
         return True
 
-    # Section 19: "unsolvable" is a property of a PAGE -- it means the page
+    # "Unsolvable" is a property of a PAGE -- it means the page
     # carries no widget. An AWS WAF CHALLENGE-action page is exactly that:
     # challenge.js only, no puzzle rendered, nothing for a solver to work
     # on. Sending it anyway buys a token for a widget that was never there,
@@ -465,6 +465,11 @@ def handle_captcha_if_present(page, args, ready_selector: str,
     if not args.twocaptcha_key:
         logger.warning("No 2captcha API key — continuing with whatever the "
                        "page already holds.")
+        return False
+    if budget is not None and not budget.spend():
+        logger.warning("This page's paid-solve allowance is used up (%d of "
+                       "%d) — not buying another token.", budget.spent,
+                       budget.limit)
         return False
     try:
         token = solve_recaptcha(challenge, args.twocaptcha_key,
@@ -515,6 +520,8 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     content_timeout = page_flow.content_timeout_ms(args.mode)
 
     block_retries = args.proxy_block_retries if (pool and len(pool) > 1) else 0
+    # One allowance for this page, kept across retries and exit rotations.
+    solve_budget = page_flow.SolveBudget()
     html, state, load_failed = None, "ok", False
     # What actually went wrong, and how many tries it really took. Both are
     # kept because the "gave up" line below used to report NEITHER: it printed
@@ -586,9 +593,13 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         if load_failed:
             break
 
-        if handle_captcha_if_present(session.page, args, ready_selector,
-                                    proxy=pool.current if pool else None):
+        if solve_budget.remaining() and handle_captcha_if_present(
+                session.page, args, ready_selector,
+                proxy=pool.current if pool else None, budget=solve_budget):
             session.page.wait_for_timeout(1000)
+            # The document now in the page replaced the challenge, so the
+            # status of the original navigation no longer describes it.
+            resp_status, resp_headers = None, None
 
         html = _content_when_settled(session.page) or ""
         if is_self_clearing_challenge(html):
@@ -623,6 +634,15 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         return outcome
 
     outcome.state = state
+
+    if state == "not_found":
+        logger.error("%s does not exist on this site (HTTP 404/410, or the "
+                     "site's own error page) — nothing to parse and nothing "
+                     "a retry or a proxy would change. Category paths differ "
+                     "between locales: take them from the locale's own "
+                     "sitemap_1-category.xml.", url)
+        outcome.final_url = session.page.url
+        return outcome
 
     if state == "blocked":
         debug_html = f"{args.out}_page{page_num}_debug.html"
@@ -725,8 +745,8 @@ def _fetch_pages_concurrently(args, pool, specs, concurrency: int):
 
     Not reached by any mode in this repo — see CONCURRENCY_CAPABLE_MODES.
     Kept, exercised by the offline suite with the browser stubbed out, and
-    kept identical to its siblings': CLAUDE.md §10 requires the concurrency
-    machinery to be tested where a live run cannot reach it, and a repo that
+    kept identical to its siblings': the concurrency machinery has to be
+    tested where a live run cannot reach it, and a repo that
     deleted it would be the one that quietly diverged when a site's
     pagination became addressable again.
     """
@@ -835,7 +855,7 @@ def scrape(args) -> int:
         elif pool.rotates_per_page():
             logger.info("--proxy-rotate per-page has no effect above "
                         "--concurrency 1: each worker owns one exit for "
-                        "its whole lifetime by design (CLAUDE.md §7), "
+                        "its whole lifetime by design, "
                         "rotated only per WORKER, not per page.")
 
     with sync_playwright() as pw:
@@ -849,6 +869,8 @@ def scrape(args) -> int:
                 stop_reason = ("page_load_timeout" if first.load_failed
                                else f"blocked_{first.blocked_by}")
                 blocked = first.blocked_by is not None
+            elif first.state == "not_found":
+                stop_reason = "not_found"
             elif args.mode not in PAGINATED_MODES:
                 pass
             else:
@@ -959,6 +981,18 @@ def scrape(args) -> int:
                       start_url=args.url, final_url=final_url)
 
 
+def _non_negative_float(value):
+    """argparse type for a delay in seconds: zero is fine, negative is not
+    (`time.sleep` raises ValueError on a negative value, mid-run)."""
+    try:
+        n = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"must be a number, got {value!r}")
+    if n < 0 or n != n:
+        raise argparse.ArgumentTypeError(f"must be 0 or greater, got {value}")
+    return n
+
+
 def _non_negative(value):
     """argparse type for a count that may be zero but never negative."""
     n = int(value)
@@ -992,7 +1026,7 @@ def parse_args():
                         "product; for --mode category it overrides "
                         "--category/--site-locale. Falls back to "
                         "$GIVENCHY_URL, then to the URL --category builds.")
-    p.add_argument("--category", default="makeup/lips",
+    p.add_argument("--category", default=None,
                    help="Category path WITHOUT the locale prefix, e.g. "
                         "makeup/lips or fragrance/womens-fragrance. Combined "
                         "with --site-locale to build the URL. The default is "
@@ -1000,7 +1034,7 @@ def parse_args():
                         "locale's real paths from its own "
                         "sitemap_1-category.xml: they are NOT shared between "
                         "locales (/fr/fr/makeup/lips/ answers 410).")
-    p.add_argument("--site-locale", default="us", choices=list(LOCALES),
+    p.add_argument("--site-locale", default=None, choices=list(LOCALES),
                    help="The locale PATH PREFIX on www.givenchybeauty.com "
                         "(default us). Not the same thing as --locale, which "
                         "is the browser's own locale: this one decides which "
@@ -1011,14 +1045,14 @@ def parse_args():
                         "listing pagination is robots-disallowed, so a "
                         "listing is one page and a value above 1 is reported "
                         "and ignored. See the module docstring.")
-    p.add_argument("--delay", type=float, default=2.0, help="Delay between pages, seconds")
+    p.add_argument("--delay", type=_non_negative_float, default=2.0, help="Delay between pages, seconds")
     p.add_argument("--concurrency", type=_positive_int, default=1, metavar="N",
                    help="Accepted for family compatibility and ignored: no "
                         "mode here has a second page to fetch in parallel "
                         "(see CONCURRENCY_CAPABLE_MODES).")
     p.add_argument("--retries", type=_positive_int, default=3,
                    help="Attempts per page load before giving up (default 3).")
-    p.add_argument("--retry-delay", type=float, default=2.0,
+    p.add_argument("--retry-delay", type=_non_negative_float, default=2.0,
                    help="Seconds before the first retry, doubling thereafter.")
     p.add_argument("--format", choices=["json", "csv", "both"], default="both")
     p.add_argument("--out", default="givenchy_products", help="Output file prefix")
@@ -1039,10 +1073,10 @@ def parse_args():
                         "a control needs. Without a control, 'we solved it "
                         "and the page came back' cannot be told apart from "
                         "'the block expired'.")
-    p.add_argument("--proxy-sessions", type=int, default=None,
+    p.add_argument("--proxy-sessions", type=_non_negative, default=None,
                    help="With --proxy pointing at a 2Captcha proxy gateway, mint this many session-pinned exits from that one credential instead of keeping a file of them. Each session is a different exit address (measured 2026-09-17: ten sessions, ten distinct addresses). Has no effect with --proxy-file, and is refused for a non-2Captcha host.")
     p.add_argument("--proxy-shuffle", action="store_true")
-    p.add_argument("--proxy-block-retries", type=int, default=2,
+    p.add_argument("--proxy-block-retries", type=_non_negative, default=2,
                    help="When a page comes back blocked, retry it from this "
                         "many OTHER exits before giving up (default 2). "
                         "Needs a pool of more than one.")
@@ -1069,6 +1103,21 @@ def parse_args():
     p.add_argument("--headless", action="store_true", default=True)
     p.add_argument("--headful", dest="headless", action="store_false")
     args = p.parse_args()
+    # What the user TYPED, captured before env_config fills anything in:
+    # afterwards a $GIVENCHY_URL from .env is indistinguishable from a typed
+    # --url. Typed builder flags (--category/--site-locale) build the URL
+    # themselves, so an environment URL can no longer silently override them.
+    typed_url = args.url
+    builder_typed = args.category is not None or args.site_locale is not None
+    if args.category is None:
+        args.category = "makeup/lips"
+    if args.site_locale is None:
+        args.site_locale = "us"
+    if typed_url and builder_typed:
+        logger.warning("--url was given, so --category/--site-locale are "
+                       "ignored: the URL is read exactly as typed.")
+    elif builder_typed and args.mode != "product":
+        args.url = f"{BASE}/{args.site_locale}/{args.category.strip('/')}/"
     env_config.apply(args)
 
     if not args.url:

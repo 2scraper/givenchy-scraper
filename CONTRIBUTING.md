@@ -76,17 +76,14 @@ Several properties in this repo exist because they were once absent, cost
 real time to find, and are now pinned by a test so a PR that breaks one fails
 rather than silently regressing:
 
-- **`data-header__label` appears on TWO different tags in a player's profile
-  header** — `<li>` for birth date/position/agent, `<span>` for
-  Joined/Contract expires — and selecting only `li` silently drops the
-  latter. `_label_map()`'s docstring in `product_parser.py` has the story;
-  the fix is a comma-separated selector, not a second function.
-- **A club or player title attribute can be doubled on this site's own
-  markup** — `title="Without ClubWithout Club"` is real, observed markup for
-  the "Without Club" free-agent placeholder, not a scraping bug. Read the
-  TEXT-bearing anchor (the tile's own title link), not the first matching link in the
-  cell (which can be an image-only wrapper with an empty text node), and let
-  `_detitle()` catch the doubling as a second line of defence.
+- **`sku` is the VARIANT id, not the master id.** One master id
+  (`F20100269`) covers up to nineteen shades, and the product URL carries
+  the master id, so reading `sku` from the URL collapses every shade of one
+  lipstick into one row. The tile's own `data-pid` and the product page's
+  JSON-LD `sku` agree on the variant id; `master_id` keeps the other.
+- **Two price containers.** Tiles render their price in either
+  `div.product-price-container` or `div.price-container`; anchoring on the
+  first alone loses every gift set (8 of 25 tiles on `/gb/makeup/lips/`).
 - **A listing's pagination is robots-disallowed on this site**, so
   `product_parser.page_url()` returns its input unchanged and a listing run
   is one fetch. Do not make it construct `?start=N&sz=25`: robots.txt
@@ -96,12 +93,15 @@ rather than silently regressing:
 - **A run that finds nothing writes nothing.** It must not replace a good
   output file with `[]`. `--allow-empty` is the opt-out.
 - **Exit codes are a contract**, not decoration: `0` ok, `1` crash, `2` bad
-  usage, `3` blocked, `4` zero rows, `6` partial. A pipeline branches on
-  these.
-- **An EMPTY page is never retried and never counted as blocked.** An
-  served category that genuinely lists nothing (`/es/…/sets/` is one) or a
-  roster data are correct answers to the question that was asked, not
-  failures. `page_flow.STATE_POLICY` holds that for all three engines so
+  usage, `3` blocked, `4` zero rows on a page that was served, `5` the
+  content was never obtained (load timeout, dead exit, an address that does
+  not exist, a 2Captcha product call failing), `6` partial. A pipeline
+  branches on these.
+- **An EMPTY page is never retried and never counted as blocked.** A
+  served category that genuinely lists nothing (`/es/…/sets/` is one) is a
+  correct answer to the question that was asked, not a failure. Neither is
+  an address that does not exist (HTTP 410 here): that is `not_found`,
+  not a block. `page_flow.STATE_POLICY` holds that for all three engines so
   they cannot disagree about it.
 - **A challenge marker is not necessarily a real challenge on THIS site.**
   `product_parser.BOT_CHALLENGE_MARKERS` is broad and, unlike the DOM
@@ -109,12 +109,10 @@ rather than silently regressing:
   captcha_solver.py's closing note) — it is cheap insurance carried over
   from this family's other members. Do not narrow it on the assumption that
   Givenchy Beauty behaves like them; measure first if you touch it.
-- **A `sku` already written by an earlier page of the same run is dropped,
-  not duplicated.** See `dedupe_by_key` in `output_writer.py`. Note that
-  `sku` means something different per mode — a player id for
-  the variant id on every row here (the master id covers many shades, so it
-  player can transfer more than once in one run's data) — so a change here
-  should be checked against all four modes, not just one.
+- **A `sku` already written earlier in the same run is dropped, not
+  duplicated.** See `dedupe_by_key` in `output_writer.py`. One `gb` listing
+  served the same tile twice (measured 2026-09-18). Check a change here
+  against both modes, `category` and `product`.
 
 There is also a naming check: certain phrases are banned repo-wide and the
 suite fails naming them. If it trips, read the message — the phrase is wrong
@@ -134,23 +132,19 @@ for a reason, not merely unfashionable.
   success without checking that the thing it wanted actually happened, is a
   common bug class. A selector that matches the *wrong* element is worse
   than one that matches nothing, because the second one tells you.
-- **Never present a guess as a fact.** A market value or fee that could not
-  be read is `None`, not `0` or a copied neighbour's value — see
-  `parse_market_value`'s handling of `"-"` and the null-price tests in
-  `smoke_test.py`.
+- **Never present a guess as a fact.** A price or currency that could not
+  be read is `None`, not `0`, a defaulted `"USD"` or a copied neighbour's
+  value — see the showcase-locale (`int/en`, `ru`) tests in `smoke_test.py`,
+  where tiles advertise `data-currency="USD"` and print no price at all.
 
 ### If your change needs a live run
 
-Most do not — the suite covers the four parsers, the writers, the captcha
-classifier and the CLI contract against inline fixtures cut from real
-captures. If yours genuinely needs transfermarkt.com, say in the PR what you
-ran (`--mode`, and `--club-id`/`--player-id`/`--season` if relevant), whether
-you used a proxy, and what you got — including the exit code and
-`.meta.json`'s `stop_reason`. Whether a datacentre address is refused here is
-genuinely unmeasured for v0.1 (see README's "known limitations"), so "it
-returned nothing" from a bare CI runner or a VPS is itself useful data, not
-noise — say so explicitly rather than treating it as a normal negative
-result.
+Most do not — the suite covers the listing and product parsers, the
+writers, the captcha classifier and the CLI contract against inline fixtures
+cut from real captures. If yours genuinely needs givenchybeauty.com, say in
+the PR what you ran (`--mode`, `--site-locale`, `--category` or `--url`),
+whether you used a proxy, and what you got — including the exit code and
+`.attempt.json`'s `stop_reason`.
 
 Do not add anything that requires logging in, or that submits a form on the
 site. This project only reads pages an anonymous visitor is served.

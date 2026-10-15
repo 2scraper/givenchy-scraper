@@ -276,7 +276,7 @@ def _next_page_href(session) -> Optional[str]:
 
 
 def handle_captcha_if_present(session, args, ready_selector: str,
-                              proxy=None) -> bool:
+                              proxy=None, budget=None) -> bool:
     driver = session.driver
     d = _driver(session)
     html = d["content"]()
@@ -304,7 +304,7 @@ def handle_captcha_if_present(session, args, ready_selector: str,
         logger.info("%s detected via %s, but content is already on the "
                     "page — not solving it.", challenge.kind, challenge.source)
         return False
-    # Section 19: "unsolvable" is a property of a PAGE -- it means the page
+    # "Unsolvable" is a property of a PAGE -- it means the page
     # carries no widget. An AWS WAF CHALLENGE-action page is exactly that:
     # challenge.js only, no puzzle rendered, nothing for a solver to work
     # on. Sending it anyway buys a token for a widget that was never there,
@@ -328,6 +328,11 @@ def handle_captcha_if_present(session, args, ready_selector: str,
         logger.warning("No 2captcha API key set, so this challenge is not "
                        "being solved. 2captcha does solve this type — set "
                        "TWOCAPTCHA_KEY (or pass --twocaptcha-key) to use it.")
+        return False
+    if budget is not None and not budget.spend():
+        logger.warning("This page's paid-solve allowance is used up (%d of "
+                       "%d) — not buying another token.", budget.spent,
+                       budget.limit)
         return False
     try:
         token = solve_recaptcha(challenge, args.twocaptcha_key,
@@ -371,6 +376,8 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     html, state, load_failed = None, "ok", False
 
     block_retries = args.proxy_block_retries if (pool and len(pool) > 1) else 0
+    # One allowance for this page, kept across retries and exit rotations.
+    solve_budget = page_flow.SolveBudget()
 
     for block_attempt in range(block_retries + 1):
         logger.info("Fetching page %d: %s", page_num, url)
@@ -405,8 +412,9 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         if load_failed:
             break
 
-        if handle_captcha_if_present(session, args, ready_selector,
-                                    proxy=pool.current if pool else None):
+        if solve_budget.remaining() and handle_captcha_if_present(
+                session, args, ready_selector,
+                proxy=pool.current if pool else None, budget=solve_budget):
             time.sleep(1)
 
         html = d["content"]() or ""
@@ -435,6 +443,15 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         return outcome
 
     outcome.state = state
+
+    if state == "not_found":
+        logger.error("%s does not exist on this site (HTTP 404/410, or the "
+                     "site's own error page) — nothing to parse and nothing "
+                     "a retry or a proxy would change. Category paths differ "
+                     "between locales: take them from the locale's own "
+                     "sitemap_1-category.xml.", url)
+        outcome.final_url = d["current_url"]()
+        return outcome
 
     if state == "blocked":
         debug_html = f"{args.out}_page{page_num}_debug.html"
@@ -526,9 +543,9 @@ def scrape(args) -> int:
                        "the remote browser has its own exit.")
         pool = None
     if args.concurrency > 1:
-        logger.warning("--concurrency is ignored in this engine: parallel "
-                       "page fetching (--mode transfers) is implemented in "
-                       "playwright_scraper.py. Running sequentially.")
+        logger.warning("--concurrency is ignored: no mode on this site has a "
+                       "second page to fetch in parallel (a listing's own "
+                       "paging is robots-disallowed). Running sequentially.")
 
     session = _Session(args, pool).open()
     try:
@@ -539,6 +556,8 @@ def scrape(args) -> int:
             stop_reason = ("page_load_timeout" if first.load_failed
                            else f"blocked_{first.blocked_by}")
             blocked = first.blocked_by is not None
+        elif first.state == "not_found":
+            stop_reason = "not_found"
         elif args.mode not in PAGINATED_MODES:
             pass
         else:
@@ -615,6 +634,18 @@ def scrape(args) -> int:
                       start_url=args.url, final_url=final_url)
 
 
+def _non_negative_float(value):
+    """argparse type for a delay in seconds: zero is fine, negative is not
+    (`time.sleep` raises ValueError on a negative value, mid-run)."""
+    try:
+        n = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"must be a number, got {value!r}")
+    if n < 0 or n != n:
+        raise argparse.ArgumentTypeError(f"must be 0 or greater, got {value}")
+    return n
+
+
 def _non_negative(value):
     """argparse type for a count that may be zero but never negative."""
     n = int(value)
@@ -647,32 +678,32 @@ def parse_args():
                    help="The exact page to read. Required for --mode product. "
                         "Falls back to $GIVENCHY_URL, then to what "
                         "--category builds.")
-    p.add_argument("--category", default="makeup/lips",
+    p.add_argument("--category", default=None,
                    help="Category path WITHOUT the locale prefix, e.g. "
                         "makeup/lips. Take real paths from the locale's own "
                         "sitemap_1-category.xml: they are NOT shared between "
                         "locales.")
-    p.add_argument("--site-locale", default="us", choices=list(LOCALES),
+    p.add_argument("--site-locale", default=None, choices=list(LOCALES),
                    help="The locale PATH PREFIX on www.givenchybeauty.com "
                         "(default us). Not --locale, which is the browser's "
                         "own. int/en and ru publish no prices.")
     p.add_argument("--pages", type=_positive_int, default=1,
                    help="Accepted for family compatibility; a listing is one "
                         "page on this site (robots-disallowed paging).")
-    p.add_argument("--delay", type=float, default=2.0)
+    p.add_argument("--delay", type=_non_negative_float, default=2.0)
     p.add_argument("--concurrency", type=_positive_int, default=1,
                    help="Ignored in this engine — see playwright_scraper.py.")
     p.add_argument("--retries", type=_positive_int, default=3)
-    p.add_argument("--retry-delay", type=float, default=2.0)
+    p.add_argument("--retry-delay", type=_non_negative_float, default=2.0)
     p.add_argument("--format", choices=["json", "csv", "both"], default="both")
     p.add_argument("--out", default="givenchy_products")
     p.add_argument("--proxy", default=None)
     p.add_argument("--proxy-file", default=None)
     p.add_argument("--proxy-rotate", choices=list(ROTATE_MODES), default="per-run")
-    p.add_argument("--proxy-sessions", type=int, default=None,
+    p.add_argument("--proxy-sessions", type=_non_negative, default=None,
                    help="With --proxy pointing at a 2Captcha proxy gateway, mint this many session-pinned exits from that one credential instead of keeping a file of them. Each session is a different exit address (measured 2026-09-17: ten sessions, ten distinct addresses). Has no effect with --proxy-file, and is refused for a non-2Captcha host.")
     p.add_argument("--proxy-shuffle", action="store_true")
-    p.add_argument("--proxy-block-retries", type=int, default=2)
+    p.add_argument("--proxy-block-retries", type=_non_negative, default=2)
     p.add_argument("--twocaptcha-key", default=None)
     p.add_argument("--allow-empty", action="store_true")
     p.add_argument("--fingerprint", action="store_true")
@@ -690,6 +721,21 @@ def parse_args():
     p.add_argument("--headless", action="store_true", default=True)
     p.add_argument("--headful", dest="headless", action="store_false")
     args = p.parse_args()
+    # What the user TYPED, captured before env_config fills anything in:
+    # afterwards a $GIVENCHY_URL from .env is indistinguishable from a typed
+    # --url. Typed builder flags (--category/--site-locale) build the URL
+    # themselves, so an environment URL can no longer silently override them.
+    typed_url = args.url
+    builder_typed = args.category is not None or args.site_locale is not None
+    if args.category is None:
+        args.category = "makeup/lips"
+    if args.site_locale is None:
+        args.site_locale = "us"
+    if typed_url and builder_typed:
+        logger.warning("--url was given, so --category/--site-locale are "
+                       "ignored: the URL is read exactly as typed.")
+    elif builder_typed and args.mode != "product":
+        args.url = f"{BASE}/{args.site_locale}/{args.category.strip('/')}/"
     env_config.apply(args)
 
     if not args.url:

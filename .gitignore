@@ -7,7 +7,7 @@
 *.json
 *.csv
 !package.json
-# Committed on purpose: a real excerpt of a real run (--mode market-values),
+# Committed on purpose: a real excerpt of a real run (--mode category),
 # so a reader can see the exact output shape without installing anything.
 !sample_output.json
 !sample_output.csv
@@ -28,12 +28,6 @@ canary_run.*
 artifacts/
 *_debug.png
 *.html.page*
-
-# --- unlike other members of this family, index.html and landing.md are ----
-# --- committed here on purpose, not generated -- do NOT gitignore them -----
-# (kept as an explicit note rather than a silent omission, since every sibling
-# scraper in this family DOES gitignore an index.html as "published
-# elsewhere", and that is deliberately not true of this repo)
 
 # --- a downloaded 2captcha proxy list is a credential file ------------------
 # Every line of one carries a login and a password. The glob covers the
@@ -75,7 +69,10 @@ env/
 # The scrapers mask user:pass in their own logs, but raw HTML dumps are NOT
 # masked, and a key pasted into a shell history file is not masked either.
 *.log
-.env
+# Every working copy of .env, however it was renamed (.env.bak, .env.local,
+# .env.save): one `git add -A` from a commit otherwise. The template stays.
+.env*
+!.env.example
 *.key
 secrets*
 
@@ -84,7 +81,6 @@ secrets*
 # HTML and sitemaps from givenchybeauty.com, fetched 2026-09-17/18. It is
 # EVIDENCE, kept on disk so a claim in the README can be re-checked, but it
 # is not repo content -- the fixtures the test suite actually runs against
-# are trimmed, scrubbed excerpts embedded in smoke_test.py, per CLAUDE.md
-# §10. A committed capture would also carry whatever per-visitor state the
+# are trimmed, scrubbed excerpts embedded in smoke_test.py. A committed capture would also carry whatever per-visitor state the
 # page happened to hold.
 captures/

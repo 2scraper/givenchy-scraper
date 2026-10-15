@@ -99,7 +99,7 @@ class CaptchaChallenge:
     page_url: str = ""
     # AWS WAF only. Its task needs three values that all live together in
     # `window.gokuProps` on the challenge page, plus the two script URLs the
-    # page loads. Unlike Cloudflare Turnstile (§19 of the family notes),
+    # page loads. Unlike Cloudflare Turnstile,
     # nothing has to be intercepted at runtime to get them: AWS WAF prints
     # all of it into the served HTML, so a static read is enough.
     iv: Optional[str] = None
@@ -151,7 +151,7 @@ class CaptchaChallenge:
     def has_captcha_widget(self) -> bool:
         """Is there a widget on this page for a solver to work on?
 
-        Section 19's rule: "unsolvable" is a property of a PAGE, not of a
+        "Unsolvable" is a property of a PAGE, not of a
         vendor, and it means the page carries no widget. A challenge-action
         page carries none, so sending it to a solver buys a token for a
         puzzle that was never rendered -- measured at $0.00145 a time, since
@@ -937,4 +937,4 @@ solve_recaptcha_v3 = solve_recaptcha
 # what the address has been doing — a narrow list is how a challenge gets
 # reported as an empty page months later. A solver for a challenge this site
 # has never been observed to serve is dead code; a DETECTOR for one is cheap
-# insurance. See the family note in CLAUDE.md.
+# insurance.

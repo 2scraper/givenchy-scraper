@@ -46,7 +46,7 @@ from dataclasses import dataclass, field
 from urllib.parse import urlparse
 from typing import List, Optional
 
-# At module level, deliberately — see CLAUDE.md §10 and §16. The offline
+# At module level, deliberately. The offline
 # suite guards `import puppeteer_scraper` behind try/except ImportError and
 # REPORTS the skip; CI's engine-smoke job fails on any reported skip. That
 # mechanism only catches a broken import if importing this module actually
@@ -339,7 +339,7 @@ def _next_page_href(session) -> Optional[str]:
 
 
 def handle_captcha_if_present(session, args, ready_selector: str,
-                              proxy=None) -> bool:
+                              proxy=None, budget=None) -> bool:
     bridge, page = session.bridge, session.page
     html = _driver(session)["content"]()
     if html is None:
@@ -365,7 +365,7 @@ def handle_captcha_if_present(session, args, ready_selector: str,
         logger.info("%s detected via %s, but content is already on the "
                     "page — not solving it.", challenge.kind, challenge.source)
         return False
-    # Section 19: "unsolvable" is a property of a PAGE -- it means the page
+    # "Unsolvable" is a property of a PAGE -- it means the page
     # carries no widget. An AWS WAF CHALLENGE-action page is exactly that:
     # challenge.js only, no puzzle rendered, nothing for a solver to work
     # on. Sending it anyway buys a token for a widget that was never there,
@@ -389,6 +389,11 @@ def handle_captcha_if_present(session, args, ready_selector: str,
         logger.warning("No 2captcha API key set, so this challenge is not "
                        "being solved. 2captcha does solve this type — set "
                        "TWOCAPTCHA_KEY (or pass --twocaptcha-key) to use it.")
+        return False
+    if budget is not None and not budget.spend():
+        logger.warning("This page's paid-solve allowance is used up (%d of "
+                       "%d) — not buying another token.", budget.spent,
+                       budget.limit)
         return False
     try:
         token = solve_recaptcha(challenge, args.twocaptcha_key,
@@ -423,15 +428,24 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
     ready_count = page_flow.ready_count(args.mode)
 
     block_retries = args.proxy_block_retries if (pool and len(pool) > 1) else 0
+    # One allowance for this page, kept across retries and exit rotations.
+    solve_budget = page_flow.SolveBudget()
     html, state, load_failed = None, "ok", False
 
     for block_attempt in range(block_retries + 1):
         logger.info("Fetching page %d: %s", page_num, url)
         load_failed = False
+        resp_status = None
         for attempt in range(1, max(1, args.retries) + 1):
             try:
-                bridge.run(page.goto(url, {"waitUntil": "domcontentloaded",
-                                           "timeout": 60000}))
+                # The response is kept for its HTTP status: a 404/410 is a
+                # wrong address, not a block, and the classifier can only
+                # tell that from the status or from the site's error page.
+                response = bridge.run(page.goto(url, {"waitUntil": "domcontentloaded",
+                                                      "timeout": 60000}))
+                resp_status = getattr(response, "status", None)
+                if not isinstance(resp_status, int):
+                    resp_status = None
                 load_failed = False
                 break
             except Exception as e:  # noqa: BLE001 — pyppeteer raises many types
@@ -457,18 +471,25 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         if load_failed:
             break
 
-        if handle_captcha_if_present(session, args, ready_selector,
-                                    proxy=pool.current if pool else None):
+        if solve_budget.remaining() and handle_captcha_if_present(
+                session, args, ready_selector,
+                proxy=pool.current if pool else None, budget=solve_budget):
             time.sleep(1)
+            # The document now in the page replaced the challenge, so the
+            # status of the original navigation no longer describes it.
+            resp_status = None
 
         html = d["content"]() or ""
         if is_self_clearing_challenge(html):
             # Shared with the other two engines -- see page_flow for why the
             # wait condition is "the site's content hooks appeared", not
             # "the challenge markers went away".
-            html, _cleared = page_flow.wait_out_self_clearing_challenge(
+            html, cleared = page_flow.wait_out_self_clearing_challenge(
                 d["content"], d["sleep"], url=page.url, log=logger.info)
-        state = page_flow.classify(html, url=page.url)
+            if cleared:
+                # The original status described the interstitial.
+                resp_status = None
+        state = page_flow.classify(html, status=resp_status, url=page.url)
 
         if not page_flow.should_retry(state):
             break
@@ -488,6 +509,15 @@ def _fetch_one_page(session, args, pool, page_num: int, url: str) -> PageOutcome
         return outcome
 
     outcome.state = state
+
+    if state == "not_found":
+        logger.error("%s does not exist on this site (HTTP 404/410, or the "
+                     "site's own error page) — nothing to parse and nothing "
+                     "a retry or a proxy would change. Category paths differ "
+                     "between locales: take them from the locale's own "
+                     "sitemap_1-category.xml.", url)
+        outcome.final_url = page.url
+        return outcome
 
     if state == "blocked":
         debug_html = f"{args.out}_page{page_num}_debug.html"
@@ -580,9 +610,9 @@ def scrape(args) -> int:
                        "the remote browser has its own exit.")
         pool = None
     if args.concurrency > 1:
-        logger.warning("--concurrency is ignored in this engine: parallel "
-                       "page fetching (--mode transfers) is implemented in "
-                       "playwright_scraper.py. Running sequentially.")
+        logger.warning("--concurrency is ignored: no mode on this site has a "
+                       "second page to fetch in parallel (a listing's own "
+                       "paging is robots-disallowed). Running sequentially.")
 
     bridge = _AsyncBridge()
     session = _Session(bridge, args, pool).open()
@@ -594,6 +624,8 @@ def scrape(args) -> int:
             stop_reason = ("page_load_timeout" if first.load_failed
                            else f"blocked_{first.blocked_by}")
             blocked = first.blocked_by is not None
+        elif first.state == "not_found":
+            stop_reason = "not_found"
         elif args.mode not in PAGINATED_MODES:
             pass
         else:
@@ -671,6 +703,18 @@ def scrape(args) -> int:
                       start_url=args.url, final_url=final_url)
 
 
+def _non_negative_float(value):
+    """argparse type for a delay in seconds: zero is fine, negative is not
+    (`time.sleep` raises ValueError on a negative value, mid-run)."""
+    try:
+        n = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"must be a number, got {value!r}")
+    if n < 0 or n != n:
+        raise argparse.ArgumentTypeError(f"must be 0 or greater, got {value}")
+    return n
+
+
 def _non_negative(value):
     """argparse type for a count that may be zero but never negative."""
     n = int(value)
@@ -703,23 +747,23 @@ def parse_args():
                    help="The exact page to read. Required for --mode product. "
                         "Falls back to $GIVENCHY_URL, then to what "
                         "--category builds.")
-    p.add_argument("--category", default="makeup/lips",
+    p.add_argument("--category", default=None,
                    help="Category path WITHOUT the locale prefix, e.g. "
                         "makeup/lips. Take real paths from the locale's own "
                         "sitemap_1-category.xml: they are NOT shared between "
                         "locales.")
-    p.add_argument("--site-locale", default="us", choices=list(LOCALES),
+    p.add_argument("--site-locale", default=None, choices=list(LOCALES),
                    help="The locale PATH PREFIX on www.givenchybeauty.com "
                         "(default us). Not --locale, which is the browser's "
                         "own. int/en and ru publish no prices.")
     p.add_argument("--pages", type=_positive_int, default=1,
                    help="Accepted for family compatibility; a listing is one "
                         "page on this site (robots-disallowed paging).")
-    p.add_argument("--delay", type=float, default=2.0)
+    p.add_argument("--delay", type=_non_negative_float, default=2.0)
     p.add_argument("--concurrency", type=_positive_int, default=1,
                    help="Ignored in this engine — see playwright_scraper.py.")
     p.add_argument("--retries", type=_positive_int, default=3)
-    p.add_argument("--retry-delay", type=float, default=2.0)
+    p.add_argument("--retry-delay", type=_non_negative_float, default=2.0)
     p.add_argument("--format", choices=["json", "csv", "both"], default="both")
     p.add_argument("--out", default="givenchy_products")
     p.add_argument("--proxy", default=None)
@@ -730,10 +774,10 @@ def parse_args():
                         "--cdp-endpoint session (measurement mode: it "
                         "lets a challenge be met and left unsolved, "
                         "which is what a control needs).")
-    p.add_argument("--proxy-sessions", type=int, default=None,
+    p.add_argument("--proxy-sessions", type=_non_negative, default=None,
                    help="With --proxy pointing at a 2Captcha proxy gateway, mint this many session-pinned exits from that one credential instead of keeping a file of them. Each session is a different exit address (measured 2026-09-17: ten sessions, ten distinct addresses). Has no effect with --proxy-file, and is refused for a non-2Captcha host.")
     p.add_argument("--proxy-shuffle", action="store_true")
-    p.add_argument("--proxy-block-retries", type=int, default=2)
+    p.add_argument("--proxy-block-retries", type=_non_negative, default=2)
     p.add_argument("--twocaptcha-key", default=None)
     p.add_argument("--fingerprint", action="store_true")
     p.add_argument("--fp-tags", default="Windows")
@@ -763,6 +807,21 @@ def parse_args():
                         "Google Chrome'. Not a credential, so the command "
                         "line is the right place for it.")
     args = p.parse_args()
+    # What the user TYPED, captured before env_config fills anything in:
+    # afterwards a $GIVENCHY_URL from .env is indistinguishable from a typed
+    # --url. Typed builder flags (--category/--site-locale) build the URL
+    # themselves, so an environment URL can no longer silently override them.
+    typed_url = args.url
+    builder_typed = args.category is not None or args.site_locale is not None
+    if args.category is None:
+        args.category = "makeup/lips"
+    if args.site_locale is None:
+        args.site_locale = "us"
+    if typed_url and builder_typed:
+        logger.warning("--url was given, so --category/--site-locale are "
+                       "ignored: the URL is read exactly as typed.")
+    elif builder_typed and args.mode != "product":
+        args.url = f"{BASE}/{args.site_locale}/{args.category.strip('/')}/"
     env_config.apply(args)
 
     if not args.url:

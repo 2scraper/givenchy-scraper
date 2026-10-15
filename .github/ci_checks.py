@@ -43,8 +43,8 @@ SAMPLE_FILES = ("sample_output.json", "sample_output.csv")
 # committing a sample is that it came from a real run; a placeholder teaches
 # readers field names and value shapes that do not exist. Kept generic
 # (rather than site-specific) on purpose: a real row here is a real
-# player or transfer, and there is no fixed set of "fake-looking" names to
-# check for the way an e-commerce sibling checks for "sample product".
+# Givenchy product, and the markers below are the shapes a hand-written
+# placeholder row tends to take.
 FABRICATION_MARKERS = ("sample-product-", "example brand", "sample product",
                        "product description text", "lorem ipsum",
                        "your_api_key", "123456789")
@@ -73,6 +73,16 @@ CREDENTIAL_ALLOWED = ("USER:PASS", "user:pass", "ACCOUNT:PASSWORD",
                       "u:pass@h1", "u:pass@h2",
                       "a:b@",                          # env_config.py's own precedence fixtures
                       "a:b@from-dotenv")
+
+# A key-shaped value under a key-shaped name, as a page's own config or a
+# fixture would carry it. Every quote may be backslash-escaped, because the
+# fixtures here are JSON strings inside Python strings and arrive as
+# `\\"apiKey\\": \\"...\\"` -- a bare-quote pattern matched zero times in
+# exactly the files where a front-end key would turn up. Not limited to hex:
+# front-end keys are often alphanumeric.
+KEY_SHAPED_FIELD = re.compile(
+    r'\\?"(?:api_?key|apiKey|clientKey|client_key|secret|access_?token)'
+    r'\\?"\s*:\s*\\?"([A-Za-z0-9_\-]{24,})\\?"', re.IGNORECASE)
 
 # A 2captcha API key is a 32-character hex string.
 HEX32 = re.compile(r"\b[0-9a-f]{32}\b")
@@ -121,13 +131,31 @@ def git_ignored(paths):
     return {p for p in proc.stdout.split("\0") if p}
 
 
+def _is_virtualenv(directory):
+    """A directory holding `pyvenv.cfg` is a virtualenv whatever it is
+    called. Matching by NAME (`venv`, `.venv`) walked into any environment
+    named anything else -- `myenv`, `venv-playwright` -- and reported pip's
+    vendored hex strings as leaked keys."""
+    return (directory / "pyvenv.cfg").is_file()
+
+
 def scanned_files():
     candidates = []
+    venvs = set()
     for path in sorted(REPO.rglob("*")):
         if not path.is_file() or path.suffix not in SCANNED_SUFFIXES:
             continue
-        if any(part in {".git", "__pycache__", ".venv", "venv"}
-               for part in path.parts):
+        # Judged on the path RELATIVE to the repo. `path.parts` holds every
+        # ancestor too, so a clone that happened to live under a directory
+        # called `venv` (or `.git`, or `__pycache__`) skipped every file and
+        # reported "nothing credential-shaped" after scanning nothing.
+        rel_parts = path.relative_to(REPO).parts
+        if any(part in {".git", "__pycache__"} for part in rel_parts):
+            continue
+        parents = [REPO.joinpath(*rel_parts[:i])
+                   for i in range(1, len(rel_parts))]
+        if any(p in venvs or _is_virtualenv(p) for p in parents):
+            venvs.update(p for p in parents if _is_virtualenv(p))
             continue
         candidates.append(path)
 
@@ -233,12 +261,22 @@ def secret_check():
                 failed.append(f"{rel}:{lineno} looks like a URL with real "
                               f"credentials in it")
 
+            if KEY_SHAPED_FIELD.search(line) and not any(
+                    token in line for token in CREDENTIAL_ALLOWED):
+                failed.append(f"{rel}:{lineno} carries a key-shaped value "
+                              f"under a key-shaped field name")
+
             for match in HEX32.findall(line):
                 if any(token in line.lower() for token in HEX32_ALLOWED):
                     continue
                 failed.append(f"{rel}:{lineno} contains {match[:6]}… — a "
                               f"32-char hex string, the shape of a 2captcha key")
 
+    if scanned == 0:
+        # "Nothing credential-shaped" after scanning nothing is a pass for
+        # the wrong reason.
+        failed.append("0 files scanned -- the scan excluded everything, so "
+                      "it proves nothing")
     if not failed:
         print(f"ok       {scanned} files scanned, nothing credential-shaped")
     return failed
