@@ -8,6 +8,8 @@ from a bill or an empty output file.
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-10-15
+
 > **Behaviour changes for existing users (audit of 2026-10-14):**
 >
 > - **A run that never obtained its page now exits 5, not 4.** A load
@@ -56,7 +58,7 @@ from a bill or an empty output file.
 - References to private family notes replaced by the rule in plain words,
   with a check that fails if one reappears.
 
-Fixes from an external audit. No release cut; `main` is ahead of v1.0.1.
+Fixes from an external audit.
 
 Three of them change behaviour for an existing user:
 
@@ -207,5 +209,6 @@ Each is encoded in the parser with the measurement that found it:
   `--pages > 1` was passed by a caller that built its own args object.
   Caught by this repo's own suite.
 
+[1.1.0]: https://github.com/2scraper/givenchy-scraper/releases/tag/v1.1.0
 [1.0.1]: https://github.com/2scraper/givenchy-scraper/releases/tag/v1.0.1
 [1.0.0]: https://github.com/2scraper/givenchy-scraper/releases/tag/v1.0.0
