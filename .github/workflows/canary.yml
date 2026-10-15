@@ -6,32 +6,17 @@ name: canary
 # badge stays green throughout. This workflow is the other half — a real run,
 # on a real page, on a schedule — so a site-side break is caught here first.
 #
-# THIS CANARY RUNS WITH OR WITHOUT A SECRET, AND THE DIFFERENCE MATTERS.
-# ------------------------------------------------------------------------
-# A sibling in this family (mediamarkt-scraper) gates its canary on a
-# residential proxy secret, because that site answers every datacentre
-# address — including a GitHub runner — with HTTP 403. Givenchy Beauty is not
-# reliably either way, and this workflow's first version got that wrong: it
-# asserted the site challenges nobody, citing research from 2026-09-10/12.
-# Then 8 of 10 consecutive requests from a bare datacentre address were
-# answered with an AWS WAF captcha, and later the same day six distinct
-# network positions drew none at all. Whether a GitHub runner meets the WAF
-# is a property of that runner's address on that morning.
+# THIS CANARY NEEDS NO SECRET, AND A BLOCK IS A FAILURE.
+# -----------------------------------------------------------
+# The listing path is served to a bare GitHub runner with a local Playwright
+# browser: the last ten scheduled runs before 2026-10-15 all reached the
+# data checks below. So the run is ungated, and every outcome other than
+# real rows -- blocked (3), zero rows (4), never obtained (5), partial (6)
+# -- turns this check red. An earlier version skipped green on exit 3 from a
+# bare runner, which meant a canary that could pass without testing the site.
 #
-# So the rule here is NOT "this needs no secret". It is:
-#
-#   * If GIVENCHY_CDP_ENDPOINT or GIVENCHY_PROXY is configured,
-#     the run goes through it — that is the repo's documented default path —
-#     and being blocked anyway is a REAL failure worth a red check.
-#   * If neither is configured, the run uses a bare runner and a local
-#     Playwright browser, which is what catches a markup change, and that is
-#     the common case. But a block from a bare runner is a fact about the
-#     runner's address, not about the site, so it SKIPS with a ::notice::
-#     rather than failing. A check that goes red for a reason nobody in this
-#     repo can fix is a check everyone learns to ignore.
-#
-# Every other exit code is still interpreted and still turns this red, so a
-# markup change cannot hide behind the skip.
+# GIVENCHY_CDP_ENDPOINT / GIVENCHY_PROXY are optional: if set, the run goes
+# through them instead of the runner's own address. Neither is required.
 #
 # Secrets reach the scraper through the ENVIRONMENT, never a command line —
 # `ps` reads argv. env_config.py reads exactly these variable names, and an
@@ -73,16 +58,13 @@ jobs:
           elif [ "$HAVE_PROXY" = "true" ]; then
             echo "::notice::Running through GIVENCHY_PROXY. A block here is a real failure."
           else
-            echo "::notice::Running from a bare runner with a local Playwright browser and no secret. This catches a markup change; if the runner's address meets the WAF, this job SKIPS rather than failing."
+            echo "::notice::Running from a bare runner with a local Playwright browser and no secret -- the path this repo documents as working without one. A block here fails the job."
           fi
 
       - name: Scrape a real, known-good category page
         id: run
-        # 3 pages, not 1: with one page pagination is never exercised, so a
-        # broken ?page= convention or the "gallery pagination trap" this
-        # repo's page_flow.py works around (see pagination_is_addressable's
-        # docstring) would stay invisible here — which is precisely the
-        # silent decay this workflow exists to catch.
+        # One page: this site's listing paging is robots-disallowed, so a
+        # listing is a single fetch by design (see the README).
         #
         # set +e: GitHub Actions runs `run:` steps as `bash -e`, so without
         # this a non-zero scraper exit aborts the script on THAT line and the
@@ -108,35 +90,18 @@ jobs:
           CODE: ${{ steps.run.outputs.exit_code }}
         run: |
           code="$CODE"
-          skipped=false
           case "$code" in
             0)   echo "OK — rows parsed from a live run." ;;
-            3)   if [ "$HAVE_CDP" = "true" ] || [ "$HAVE_PROXY" = "true" ]; then
-                   echo "::error::Blocked before parsing (exit 3) while running through a configured exit (cdp=$HAVE_CDP proxy=$HAVE_PROXY). That is the documented default path failing, not the runner's address. Check the zone or proxy credentials first — a Scraping Browser zone that refuses CONNECT by host reports ERR_TUNNEL_CONNECTION_FAILED and is an account matter, not a scraper bug — then see detect_bot_challenge()/BOT_CHALLENGE_MARKERS in product_parser.py."
-                 else
-                   # No secret configured, so this ran from a bare runner. A
-                   # block here is a fact about that runner's address on the
-                   # day: 8 of 10 requests from one datacentre address were
-                   # challenged on 2026-09-16, and none at all from six other
-                   # network positions later the same day. Nothing in this
-                   # repo can fix it, so it must not paint the check red.
-                   echo "::notice::SKIPPED: this runner's address was challenged before the page was parsed (exit 3), and no GIVENCHY_CDP_ENDPOINT or GIVENCHY_PROXY secret is configured to route around it. That is a property of the runner's address, not of the site or of this scraper, so the canary is skipping rather than failing. Set either secret to have this run go through an exit that is not challenged -- and to make a block here a real failure."
-                   skipped=true
-                   code=0
-                 fi ;;
+            3)   echo "::error::Blocked before parsing (exit 3) (cdp=$HAVE_CDP proxy=$HAVE_PROXY). The canary does not skip on a block: a run that never saw the listing has tested nothing. From a bare runner this may be the runner's address rather than the site -- the HTML dump in the artifacts shows which challenge was served; setting GIVENCHY_PROXY or GIVENCHY_CDP_ENDPOINT routes the run around it." ;;
             4)   echo "::error::Ran fine but parsed 0 rows (exit 4) on a listing known to carry products. The site's markup has probably changed. The HTML dump in the artifacts tells you what the parser actually saw." ;;
-            5)   echo "::error::Remote API error (exit 5) — a 2captcha product path failed. With a secret configured (cdp=$HAVE_CDP proxy=$HAVE_PROXY) that is the endpoint or the credentials; with neither, nothing should have called a remote API at all and the run log in the artifacts is where to start." ;;
+            5)   echo "::error::The page was never obtained (exit 5): a load timeout, a dead exit, or a 2captcha product path failing (cdp=$HAVE_CDP proxy=$HAVE_PROXY). canary_run.attempt.json names the stop_reason; not_found means the canary's own category path has been retired." ;;
             6)   echo "::error::Partial run (exit 6) — the run stopped early. canary_run.meta.json names which pages failed. A listing here is a SINGLE page, so a partial run means that one page failed after some rows were already merged, not that pagination ran out." ;;
             2)   echo "::error::Bad usage (exit 2) — the workflow's own arguments are wrong, not the site." ;;
             *)   echo "::error::Unexpected exit code $code (see the step above for the traceback)." ;;
           esac
-          echo "skipped=$skipped" >> "$GITHUB_OUTPUT"
           test "$code" = "0"
 
       - name: Sanity-check the scraped data
-        # Nothing was fetched on the skip path, so there is nothing to check
-        # and canary_run.json does not exist.
-        if: steps.verdict.outputs.skipped != 'true'
         # Exit 0 only means "some rows were written". It says nothing about
         # whether the page actually rendered: a snapshot taken too early still
         # writes rows, just with fields empty. Every floor below is set from a
@@ -194,7 +159,7 @@ jobs:
                   fail.append(f"{field} present on only {got}/{len(rows)} rows "
                               f"(floor {floor:.0%})")
 
-          # CLAUDE.md §4's guard, one line and it catches the regression
+          # One line, and it catches the regression
           # forever: a struck price read from the wrong node (an EU 30-day-low
           # disclosure rather than a list price) gives an original_price at or
           # BELOW the price, which is a negative discount on a product that is
@@ -215,7 +180,7 @@ jobs:
               fail.append("sku is not unique across the run -- rows are being "
                           "keyed on something that is not the variant id")
 
-          # CLAUDE.md §18's tokopedia lesson: a page number never threaded
+          # A page number never threaded
           # into the parser produces (page, row_index) collisions that look,
           # from the row count alone, like a healthy run.
           pairs = [(r.get("page"), r.get("row_index")) for r in rows]
@@ -259,6 +224,7 @@ jobs:
             canary_run.json
             canary_run.csv
             canary_run.meta.json
+            canary_run.attempt.json
             canary_run.html*
             canary_run_page*_debug.*
           if-no-files-found: ignore

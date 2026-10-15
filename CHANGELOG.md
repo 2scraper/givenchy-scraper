@@ -8,6 +8,54 @@ from a bill or an empty output file.
 
 ## [Unreleased]
 
+> **Behaviour changes for existing users (audit of 2026-10-14):**
+>
+> - **A run that never obtained its page now exits 5, not 4.** A load
+>   timeout or a dead proxy used to exit 4 ("zero products"), the same code
+>   as a category that genuinely lists nothing. Exit 4 now means only the
+>   latter.
+> - **An address that does not exist (HTTP 404/410, or the site's own error
+>   page) is `stop_reason: not_found`, exit 5.** Playwright used to call it
+>   blocked (exit 3, retried on every exit); Selenium and pyppeteer called
+>   it an empty category (exit 4).
+> - **Output files are created with the mode `open()` would give them**
+>   (`0o666 & ~umask`), and a replaced file keeps its own mode. They were
+>   0600 under every umask.
+> - **Negative `--delay`, `--retry-delay`, `--proxy-block-retries`,
+>   `--proxy-sessions` (and `--timeout` below 1 in `scraper_api_client.py`)
+>   are usage errors (exit 2)** naming the flag.
+> - **CSV cells starting with `=`, `+`, `-`, `@`, a tab or a line break are
+>   prefixed with `'`**, CSV only; `csv_cells_escaped` in the sidecar counts
+>   them.
+> - **The canary no longer skips green when the runner is blocked.** Exit 3,
+>   4, 5 or 6 fail it.
+
+### Fixed (audit of 2026-10-14)
+
+- `scraper_api_client.py`: `waitFor` is sent as an object (the string form
+  is now refused with a billed HTTP 422); the target's status is read from
+  `http_code` (the API's `status` is a verdict string and crashed the page
+  classifier); the `x-debug` header is logged with credentials masked.
+- Paid captcha solves are capped at one per page across every retry and
+  exit rotation, in all three engines (a three-exit pool reached the solver
+  three times for one page).
+- Typed `--category`/`--site-locale` are no longer overridden by a
+  `GIVENCHY_URL` in the environment or `.env`.
+- pyppeteer now passes the HTTP status to the page classifier.
+- `.gitignore` covers every `.env*` copy (`.env.bak`, `.env.local`), keeping
+  `.env.example` committable.
+- The credential scan judges paths relative to the repo (a clone under a
+  directory named `venv` scanned 0 files and reported clean), recognises a
+  virtualenv by `pyvenv.cfg` rather than by name, reads key-shaped fields in
+  JSON-escaped fixtures, and fails when it scanned nothing.
+- Text describing a sibling site removed from CONTRIBUTING, the issue
+  templates, the review prompt and log messages; two helper scripts that
+  measured that sibling site (`tools/waf_probe.sh`,
+  `tools/verify_browser_api.sh`) removed. The vocabulary check that guards
+  this now covers `.sh` files and was case-blind to one of its own words.
+- References to private family notes replaced by the rule in plain words,
+  with a check that fails if one reappears.
+
 Fixes from an external audit. No release cut; `main` is ahead of v1.0.1.
 
 Three of them change behaviour for an existing user:

@@ -85,7 +85,7 @@ MAX_API_TIMEOUT = 120
 PAGINATED_MODES = ()
 
 
-# Global on purpose, not a single find/partition -- see CLAUDE.md §8: "A
+# Global on purpose, not a single find/partition: "A
 # masker that handles the first occurrence prints the password the other
 # four times and looks like it is working." Same pattern the three browser
 # engines use in their own _mask_credentials.
@@ -98,20 +98,62 @@ def _mask_credentials(text: str) -> str:
     return _CREDENTIALS_IN_URL_RE.sub(r"\1***:***@", text or "")
 
 
-def _build_wait_for(args) -> Optional[str]:
-    """`waitFor` must be a JSON STRING (double-encoded), per the API docs.
-    Passing a nested object is silently wrong.
+def _build_wait_for(args) -> Optional[dict]:
+    """`waitFor` is sent as a JSON OBJECT.
+
+    This client used to send it as a double-encoded JSON string, which is
+    what an older reading of the API docs said. The API now refuses the
+    string form with HTTP 422 ("params.waitFor must be an object") and still
+    bills the call, while the object form answers 200 -- so every --wait-*
+    run was a paid exit 5.
 
     Default (no flag): wait for the DOM. Not needed for a page that arrives
     as complete HTML with no hydration (this site, per the module
     docstring) -- --wait-text/--wait-element exist for the day that stops
     being true, or for a --cdp-url run through a challenge page."""
     if args.wait_text:
-        return json.dumps({"text": args.wait_text})
+        return {"text": args.wait_text}
     if args.wait_element:
-        return json.dumps({"element": args.wait_element, "checkVisible": True})
+        return {"element": args.wait_element, "checkVisible": True}
     if args.wait_state:
-        return json.dumps({"state": args.wait_state})
+        return {"state": args.wait_state}
+    return None
+
+
+# Credentials embedded ANYWHERE in a blob of text, and every occurrence.
+_KEY_IN_TEXT_RE = re.compile(
+    r"((?:client)?key|token|api[_-]?key)=([^&\s'\"]{6,})", re.IGNORECASE)
+
+
+def _redact_debug_header(value: str) -> str:
+    """The x-debug header, safe to log.
+
+    The API echoes back the task it ran in this header, so a run driven
+    through a credentialled --cdp-url put that endpoint's username and
+    password into the log verbatim, and a key passed as a query parameter
+    would go the same way. Redaction rather than an allowlist of fields: the
+    header's shape is the API's, and an allowlist would silently drop the
+    cost and timing figures this is logged for the first time a field is
+    added.
+    """
+    return _KEY_IN_TEXT_RE.sub(r"\1=***", _mask_credentials(value))
+
+
+def _target_status(body: dict) -> Optional[int]:
+    """The TARGET page's HTTP status from a `format=json` response.
+
+    The target's status is `http_code`. `status` is the API's own verdict
+    string ("success", "warn", ...), which can read `warn` on a 200 and on a
+    403 alike; handing it to the page classifier crashed the run with
+    `TypeError: '<=' not supported between 'int' and 'str'`. `status` is used
+    only when it is itself an integer.
+    """
+    code = body.get("http_code")
+    if isinstance(code, int) and not isinstance(code, bool):
+        return code
+    legacy = body.get("status")
+    if isinstance(legacy, int) and not isinstance(legacy, bool):
+        return legacy
     return None
 
 
@@ -120,14 +162,14 @@ def fetch_html(args, url: str, timeout: int):
         "task_type": "scrape",
         "url": url,
         "data_format": "raw",   # we want HTML; product_parser does the rest
-        "format": "json",       # so we get {"status", "headers", "body"}
+        "format": "json",       # {"status": API verdict, "http_code": target status, "headers", "body"}
         "timeout": min(timeout, MAX_API_TIMEOUT),
     }
 
     wait_for = _build_wait_for(args)
     if wait_for:
         payload["waitFor"] = wait_for
-        logger.info("waitFor: %s", wait_for)
+        logger.info("waitFor: %s", json.dumps(wait_for, ensure_ascii=False))
 
     if args.cdp_url:
         payload["cdpurl"] = args.cdp_url
@@ -150,7 +192,7 @@ def fetch_html(args, url: str, timeout: int):
     # cost of the call shows up.
     debug = resp.headers.get("x-debug")
     if debug:
-        logger.info("x-debug: %s", debug)
+        logger.info("x-debug: %s", _redact_debug_header(debug))
 
     if resp.status_code != 200:
         # 422 = task ran but errored (this is what a bad/unreachable
@@ -165,9 +207,10 @@ def fetch_html(args, url: str, timeout: int):
 
     body = resp.json()
     html = body.get("body") or ""
-    upstream_status = body.get("status")
+    upstream_status = _target_status(body)
     upstream_headers = body.get("headers") or {}
-    logger.info("Upstream page status %s, %d bytes of HTML.", upstream_status, len(html))
+    logger.info("Upstream page HTTP status %s (API verdict %r), %d bytes of "
+                "HTML.", upstream_status, body.get("status"), len(html))
     # The STATUS and the HEADERS both travel WITH the HTML, neither thrown
     # away. The Scraper API hands back `{"status", "headers", "body"}` and
     # until v0.4.1 this function kept the first two thirds of that and
@@ -220,6 +263,13 @@ def _fetch_one_page(args, page_num: int, url: str):
 
         state = detect_page_state(html, status=upstream_status, url=url,
                                   headers=upstream_headers)
+        if state == "not_found":
+            # Terminal, not a block: a retry cannot make the address exist.
+            logger.error("%s does not exist on this site (upstream HTTP %s) "
+                         "— nothing to parse. Category paths differ between "
+                         "locales: take them from the locale's own "
+                         "sitemap_1-category.xml.", url, upstream_status)
+            return [], None, upstream_status, html
         if state == "blocked":
             # Retried like a vendor challenge, NOT returned immediately: a
             # transient upstream error (a non-2xx status, or an empty body)
@@ -267,12 +317,13 @@ def _fetch_one_page(args, page_num: int, url: str):
         coverage = priced / len(rows)
         logger.info("Price coverage on page %d: %d/%d (%.0f%%).", page_num,
                     priced, len(rows), 100.0 * coverage)
-        # See page_flow.PRICE_COVERAGE_FLOOR for why transfers is excluded.
+        # See page_flow.PRICE_COVERAGE_FLOOR for why showcase locales are
+        # excluded.
         if coverage < page_flow.PRICE_COVERAGE_FLOOR:
             logger.warning("Price coverage on page %d (%.0f%%) is below the "
                            "%.0f%% floor for --mode %s — check for a "
                            "parsing regression rather than assuming these "
-                           "players are all free agents.",
+                           "products are genuinely unpriced.",
                            page_num, 100.0 * coverage,
                            100.0 * page_flow.PRICE_COVERAGE_FLOOR, args.mode)
 
@@ -299,6 +350,9 @@ def scrape(args) -> int:
         stop_reason = f"blocked_{blocked_by}"
         blocked = True
         pages_failed.append(1)
+    elif not rows and detect_page_state(page1_html, status=_status,
+                                        url=args.url) == "not_found":
+        stop_reason = "not_found"
     else:
         pages_completed = 1
         fresh = dedupe_by_key(rows, seen_keys, key="sku")
@@ -308,11 +362,10 @@ def scrape(args) -> int:
         if args.pages > 1 and args.mode in PAGINATED_MODES:
             # Same "verify first" check the browser engines make off the
             # live DOM (page_flow.pagination_is_addressable) -- made here
-            # off the fetched HTML instead. See page_flow.py's "gallery
-            # This site has no addressable pagination at all (see the
-            # module docstring), so this always answers False.
-            # transfers), and only rarely is not -- this checks which is
-            # true FOR THIS RUN rather than assuming either way.
+            # off the fetched HTML instead. This site has no addressable
+            # pagination at all (see the module docstring), so this always
+            # answers False today; it is kept so the answer is checked per
+            # run rather than assumed.
             soup = BeautifulSoup(page1_html, "html.parser")
             next_el = soup.select_one("link[rel='next'], a[rel='next']")
             site_next = next_el.get("href") if next_el else None
@@ -414,6 +467,18 @@ def main() -> int:
         return EXIT_REMOTE_API_ERROR
 
 
+def _non_negative_float(value):
+    """argparse type for a delay in seconds: zero is fine, negative is not
+    (`time.sleep` raises ValueError on a negative value, mid-run)."""
+    try:
+        n = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"must be a number, got {value!r}")
+    if n < 0 or n != n:
+        raise argparse.ArgumentTypeError(f"must be 0 or greater, got {value}")
+    return n
+
+
 def _non_negative(value):
     """argparse type for a count that may be zero but never negative."""
     n = int(value)
@@ -457,20 +522,20 @@ def parse_args():
                    help="Override the URL this mode would otherwise build. "
                         "Falls back to $GIVENCHY_URL, then to the "
                         "mode's own canonical URL.")
-    p.add_argument("--category", default="makeup/lips",
+    p.add_argument("--category", default=None,
                    help="Category path without the locale prefix, e.g. "
                         "makeup/lips.")
-    p.add_argument("--site-locale", default="us", choices=list(LOCALES),
+    p.add_argument("--site-locale", default=None, choices=list(LOCALES),
                    help="Locale path prefix on www.givenchybeauty.com.")
     p.add_argument("--pages", type=_positive_int, default=1,
                    help="Listing pages to crawl. Checked per run against "
                         "page 1's own next-link (page_flow.pagination_is_"
                         "addressable). A listing is one page on this site: "
                         "its own paging is robots-disallowed.")
-    p.add_argument("--delay", type=float, default=1.0, help="Delay between pages, seconds")
+    p.add_argument("--delay", type=_non_negative_float, default=1.0, help="Delay between pages, seconds")
     p.add_argument("--format", choices=["json", "csv", "both"], default="both")
     p.add_argument("--out", default="givenchy_products_scraperapi", help="Output file prefix")
-    p.add_argument("--timeout", type=int, default=60,
+    p.add_argument("--timeout", type=_positive_int, default=60,
                    help=f"API-side task timeout in seconds (1-{MAX_API_TIMEOUT}, default 60)")
     p.add_argument("--cdp-url", default=None,
                    help="Route the fetch through an existing browser session over CDP "
@@ -490,7 +555,7 @@ def parse_args():
     p.add_argument("--retries", type=_positive_int, default=1,
                    help="Extra attempts if a bot-challenge page comes back. Each attempt "
                         "is a separate billable task, so this defaults to 1.")
-    p.add_argument("--retry-delay", type=int, default=10, help="Seconds between retries")
+    p.add_argument("--retry-delay", type=_non_negative_float, default=10, help="Seconds between retries")
     p.add_argument("--dump-html", default=None,
                    help="Save the exact HTML the parser is given (always, even on success)")
     args = p.parse_args()
@@ -498,6 +563,21 @@ def parse_args():
     # This client uses --key rather than --twocaptcha-key, so the env
     # mapping is spelled out instead of defaulted -- same pattern this
     # family's mediamarkt-scraper uses for its own scraper_api_client.py.
+    # What the user TYPED, captured before env_config fills anything in:
+    # afterwards a $GIVENCHY_URL from .env is indistinguishable from a typed
+    # --url. Typed builder flags (--category/--site-locale) build the URL
+    # themselves, so an environment URL can no longer silently override them.
+    typed_url = args.url
+    builder_typed = args.category is not None or args.site_locale is not None
+    if args.category is None:
+        args.category = "makeup/lips"
+    if args.site_locale is None:
+        args.site_locale = "us"
+    if typed_url and builder_typed:
+        logger.warning("--url was given, so --category/--site-locale are "
+                       "ignored: the URL is read exactly as typed.")
+    elif builder_typed and args.mode != "product":
+        args.url = f"{BASE}/{args.site_locale}/{args.category.strip('/')}/"
     env_config.apply(args, keys={
         "TWOCAPTCHA_KEY": "key",
         "GIVENCHY_CDP_ENDPOINT": "cdp_url",
@@ -505,7 +585,7 @@ def parse_args():
     })
 
     if key_on_argv:
-        # CLAUDE.md §8: credentials never reach argv. Warn rather than refuse,
+        # Credentials never reach argv. Warn rather than refuse,
         # because refusing would break a caller mid-pipeline -- but say it
         # plainly, because `ps` makes this readable to every other user on the
         # box and it lands in shell history.

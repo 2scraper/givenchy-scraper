@@ -26,8 +26,8 @@ is why locale detection here walks a list longest-first instead of taking
 | product, priced locale (`us`, `gb`, `jp`) | **1**, a complete `Product` | JSON-LD |
 | product, showcase locale (`int/en`, `ru`) | **0** | the DOM, and there is no price to read |
 
-So CLAUDE.md §4's "JSON-LD first" is right for product pages and wrong for
-listings, where the site publishes none. Per §4's amazon-scraper precedent
+So "JSON-LD first" is right for product pages and wrong for listings,
+where the site publishes none. As on a sibling site with no structured data,
 the listing's primary source is then the site's OWN data attributes — here a
 `data-gtm` JSON blob plus `data-pid`/`data-masterid`/`data-currency` on every
 tile — with the URL pattern kept as the fallback.
@@ -37,7 +37,7 @@ tile — with the URL pattern kept as the fallback.
 JSON-LD `price: "50.00"`, `priceCurrency: "USD"`, and the same product's tile
 in `/us/makeup/lips/` carries `content="50.00"` with
 `meta[itemprop=priceCurrency] content="USD"`. Farfetch's three-price
-disagreement is not this site, so §4's tile-price overlay is deliberately not
+disagreement is not this site, so a tile-price overlay is deliberately not
 ported — it would be dead code that looks load-bearing.
 
 Traps this file exists to absorb
@@ -91,8 +91,8 @@ from output_writer import Product
 # ---------------------------------------------------------------------------
 # Unlike every sibling repo, there is no per-country hostname to verify here:
 # one host serves all eleven locales. `HOSTS` therefore has two entries, not
-# eleven, and the mediamarkt.lu lesson (CLAUDE.md §5 — a same-brand host that
-# turned out to run on a different platform) applies to the LOCALE list
+# eleven, and the mediamarkt.lu lesson (a same-brand host that turned out to
+# run on a different platform) applies to the LOCALE list
 # instead. Each locale below was fetched live and its markup compared against
 # `/us/`: `productTile-wrapper`, `data-pid` and the `giv-ProductTile-*` class
 # names are identical on all of them.
@@ -133,7 +133,7 @@ def unsupported_reason(url: str) -> Optional[str]:
         # Givenchy's couture site (givenchy.com) is a different platform from
         # the beauty site and shares none of the markup this file reads.
         # Naming the reason beats "is not a Givenchy site", which would be
-        # false and would send the reader looking for a typo (CLAUDE.md §5).
+        # false and would send the reader looking for a typo.
         return ("is a Givenchy site, but not givenchybeauty.com — this repo "
                 "reads the Salesforce B2C Commerce beauty storefront, whose "
                 "markup the couture site does not share")
@@ -234,8 +234,8 @@ def product_url(locale: str, sku: str, slug: str = "p") -> str:
 # exactly those disallowed URLs.
 #
 # So this repo does not page a listing. `page_url` returns the URL unchanged
-# for every page number, which makes CLAUDE.md §7's layer 3 — "this page
-# added no new sku" — the terminating condition, and an engine asked for
+# for every page number, which makes "this page added no new sku" the
+# terminating condition, and an engine asked for
 # `--pages 5` stops after one fetch with `pagination_exhausted` instead of
 # requesting a page robots asks it not to.
 #
@@ -363,13 +363,13 @@ def category_from_url(url: Optional[str]) -> Optional[str]:
 # ---------------------------------------------------------------------------
 # Money
 # ---------------------------------------------------------------------------
-# Every grouping convention CLAUDE.md §4 lists, plus the no-break spaces a
+# Every grouping convention in real use (1,234.56 / 1.234,56 / 1 234,56), plus the no-break spaces a
 # rendered page actually uses (a plain space is the rare form).
 _SPACES = "    "
 
 # Longest first, so `US$` is not swallowed by `$`. Only the symbols this
 # site's eleven locales can print are listed; an unrecognised symbol yields
-# no currency rather than a plausible-looking wrong one (§4, tier 5).
+# no currency rather than a plausible-looking wrong one.
 _CURRENCY_BY_SYMBOL: Tuple[Tuple[str, str], ...] = (
     ("US$", "USD"), ("CA$", "CAD"), ("C$", "CAD"),
     ("€", "EUR"), ("£", "GBP"), ("¥", "JPY"), ("₽", "RUB"), ("$", "USD"),
@@ -434,7 +434,7 @@ def parse_money(text: Optional[str], locale: str = DEFAULT_LOCALE
 def _to_float(raw: str) -> Optional[float]:
     """A grouped number string to a float.
 
-    The three rules CLAUDE.md §4 names: last separator wins when both appear;
+    Three rules: last separator wins when both appear;
     exactly three trailing digits after a lone separator is a THOUSANDS group
     (no currency here has a 3-digit subunit); spaces are always grouping.
     """
@@ -464,7 +464,7 @@ def parse_price(text: Optional[str], locale: str = DEFAULT_LOCALE) -> Optional[f
 # ---------------------------------------------------------------------------
 # givenchybeauty.com is fronted by Akamai and Cloudflare (measured
 # 2026-09-17 from response headers). The marker set is the family's, kept
-# broad on purpose (CLAUDE.md §8: different geos surface different
+# broad on purpose (different geos surface different
 # challenges) and CHECKED against pages known to be good: 0 occurrences of
 # every marker below across 14 served captures — 8 listing pages in 5 locales,
 # 3 product pages and 6 section indexes, measured 2026-09-18. A marker that
@@ -500,16 +500,16 @@ BOT_CHALLENGE_MARKERS = {
 # Which vendors mean "a challenge that can be paid to clear" (state
 # `captcha`, policy solve=True) rather than "an edge-level refusal" (state
 # `blocked`, solve=False). Akamai is deliberately NOT here: its bot manager
-# refuses at the edge rather than presenting a widget, and CLAUDE.md §19's
-# rule cuts the other way too — offering a solver a page with no widget
+# refuses at the edge rather than presenting a widget, and "unsolvable is a
+# property of a page" cuts the other way too — offering a solver a page with no widget
 # buys a task built from nothing. If an Akamai page here is ever measured
 # carrying a real widget, move it and say what was measured.
 SOLVABLE_VENDORS = ("reCAPTCHA", "hCaptcha", "Cloudflare", "AWS WAF")
 
 # The Akamai `sec-cpt` interstitial carries no widget and no sitekey: its
 # markup is a progress bar plus a script that reloads the page once the
-# challenge XHR returns. So it is not offered to the solver — CLAUDE.md §19
-# cuts both ways, and `createTask` validates almost nothing and would charge
+# challenge XHR returns. So it is not offered to the solver: a page with no
+# widget has nothing to solve, and `createTask` validates almost nothing and would charge
 # for a task built from a page with nothing in it to solve. This repo does
 # not implement a paid path for this challenge; it waits the page out, which
 # is what the page itself is asking for.
@@ -536,16 +536,14 @@ WAF_ACTION_HEADER = "x-amzn-waf-action"
 # The Scraping Browser API's auto-solve extension injects its own hunter
 # scripts into every page it loads, and two of the strings it injects
 # (`cf-turnstile`, the awswaf interceptor) are in the marker set above — so
-# this guard is live code here, not the dead copy CLAUDE.md §8 warns about
-# adding speculatively.
+# this guard is live code here, not a speculative dead copy.
 _EXTENSION_TAG_RE = re.compile(
     r"<script[^>]+src=[\"'](?:chrome|moz)-extension://[^\"']+[\"'][^>]*>.*?</script>",
     re.IGNORECASE | re.DOTALL)
 
 # The site's own asset signature. Present 276-512 times on every one of the
 # 14 served captures (measured 2026-09-18) and structurally absent from an
-# interstitial, which is CLAUDE.md §8's "a served page is built out of the
-# site's own assets" applied here.
+# interstitial: a served page is built out of the site's own assets.
 _SITE_ASSET_MARKER = "Sites-givenchy-beauty"
 
 # Positive content hooks, each measured to be unambiguous:
@@ -555,6 +553,18 @@ _SITE_ASSET_MARKER = "Sites-givenchy-beauty"
 # that page reads as `empty` rather than as content or as a block.
 _LISTING_HOOK = "js-ProductItem"
 _PRODUCT_HOOK = "js-pdp"
+
+# The site's own "this address does not exist" page. Measured 2026-10-14 with
+# plain curl: `/fr/fr/makeup/lips/` and a made-up `/us/makeup/<nonsense>/`
+# both answer HTTP 410 with a full storefront page (275-330 asset
+# references) whose Demandware page context reads
+# `{"title":"General Error","type":"error","ns":"error"}`, and neither
+# carries a listing or product hook. A served-but-empty category
+# (`/es/maquillaje/sets-de-regalo/`, HTTP 200) reads `"ns":"category"`
+# instead, so this marker does not turn a genuinely empty listing into a
+# missing one. It is what lets Selenium and pyppeteer, which have no HTTP
+# status to read, reach the same answer as the engines that do.
+_NOT_FOUND_HOOK = '"type":"error","ns":"error"'
 
 
 def detect_bot_challenge(html: str, url: Optional[str] = None) -> Optional[str]:
@@ -583,9 +593,10 @@ def _header(headers: Optional[Dict[str, str]], name: str) -> Optional[str]:
 def detect_page_state(html: str, status: Optional[int] = None,
                       url: Optional[str] = None,
                       headers: Optional[Dict[str, str]] = None) -> str:
-    """content | blocked | captcha | empty — see page_flow.STATE_POLICY.
+    """content | blocked | captcha | empty | not_found — see
+    page_flow.STATE_POLICY.
 
-    Ordered by how much each check PROVES, per CLAUDE.md §17, not by cost:
+    Ordered by how much each check PROVES, not by cost:
 
     1. `x-amzn-waf-action` is the front naming its own action, so nothing
        overrides it.
@@ -594,7 +605,7 @@ def detect_page_state(html: str, status: Optional[int] = None,
        assets, and an engine enumerating one must not read that as a block.
     4. The site's OWN hooks are an unambiguous positive, and run BEFORE the
        vendor scan because the scan can match a marker that is not the
-       site's at all (the auto-solve extension, §19).
+       site's at all (the auto-solve extension).
     5. The vendor scan then only refines the reason for a page that already
        failed to look like content.
     6. A non-2xx status comes last among the positive tests: it proves
@@ -614,6 +625,17 @@ def detect_page_state(html: str, status: Optional[int] = None,
 
     if not html:
         return "blocked"
+
+    # A wrong or retired address. Terminal and NOT a block: retrying it
+    # cannot help, and calling it blocked (exit 3) sends the reader to buy a
+    # proxy when the thing to fix is the URL. Read from the status where an
+    # engine has one, and from the site's own error page where it does not.
+    if status in (404, 410):
+        return "not_found"
+    if (status is None and _SITE_ASSET_MARKER in html
+            and _NOT_FOUND_HOOK in html
+            and _LISTING_HOOK not in html and _PRODUCT_HOOK not in html):
+        return "not_found"
 
     status_ok = status is None or 200 <= status < 300
     if status_ok and ("<urlset" in html or "<sitemapindex" in html):
@@ -638,15 +660,14 @@ def detect_page_state(html: str, status: Optional[int] = None,
 # ---------------------------------------------------------------------------
 # Class names, not build hashes: `giv-ProductTile-*` and `pdp__*` are this
 # theme's own vocabulary and were identical across all five locales checked.
-# The URL pattern (`_SKU_IN_URL_RE`) remains the fallback anchor per
-# CLAUDE.md §4, and `data-pid` is the primary one per its amazon-scraper
-# precedent.
+# The URL pattern (`_SKU_IN_URL_RE`) remains the fallback anchor, and
+# `data-pid` is the primary one.
 SELECTORS = {
     # A tile is the OUTERMOST node covering exactly one product: it carries
     # `data-pid` and there is exactly one per product, measured 317 tiles /
     # 317 `[data-pid]` elements across 20 captures. So no ancestor-widening
     # walk is needed here and none is written — the "junk-link data theft"
-    # failure of CLAUDE.md §4 cannot arise when the site labels the tile
+    # failure (one tile reading its neighbour's price) cannot arise when the site labels the tile
     # itself.
     "tile": "div.productTile-wrapper[data-pid]",
     "tile_article": "article.giv-ProductTile-item",
@@ -732,12 +753,12 @@ def tile_price(box, locale: str = DEFAULT_LOCALE):
                         `meta[itemprop=priceCurrency]`. Both are facts.
       2. text only        7 of 317 — a `gb` gift set rendering a bare
                         `£82.00` with no microdata at all. The currency then
-                        comes from the symbol, which §4 ranks as a guess.
+                        comes from the symbol, which is a guess.
       3. no price box    26 of 317 — every one of them a showcase locale.
                         Yields all-None rather than a zero.
 
     The struck price is kept only when it is ABOVE the sale price. That is
-    §4's guard against reading an EU 30-day-low disclosure as a was-price: a
+    The guard against reading an EU 30-day-low disclosure as a was-price: a
     low printed BELOW the price would give a negative discount on a product
     that is not discounted. None was found on this site (1 struck price in
     317 tiles, £134.00 against £105.20), and the guard costs one comparison.
@@ -764,7 +785,7 @@ def tile_price(box, locale: str = DEFAULT_LOCALE):
 def discount_pct(price: Optional[float], original: Optional[float]) -> Optional[float]:
     """Discount computed from the two figures, never read from the badge.
 
-    The site prints its own `-21%`, but §4's Farfetch lesson is that a
+    The site prints its own `-21%`, but on a sibling site a
     printed percentage can be the first of two compounding discounts. The
     computed value is the one that matches what the customer pays. Returns
     None — not 0 and not a negative — when the two figures are not what they
@@ -912,7 +933,7 @@ def _tile_availability(article, gtm: dict) -> Optional[str]:
 def _jsonld_blocks(soup) -> List[dict]:
     """Every JSON-LD object on the page, flattened.
 
-    Handles the shapes CLAUDE.md §4 lists as legal and naive-parser-fatal: a
+    Handles the shapes that are legal schema.org and fatal to a naive parser: a
     block may be a list, and products may hide inside `@graph` rather than at
     the top level — which loses every product SILENTLY, reporting an empty
     page for an unread format. A malformed block costs itself, not the run.
@@ -950,7 +971,7 @@ def _first_offer(node: dict) -> dict:
     """`offers` as a dict, whatever legal shape it arrived in.
 
     `"offers": null` is an explicit null, so a `.get("offers", {})` default
-    does NOT apply — that is the `AttributeError` §4 names first. A list may
+    does NOT apply — that is an `AttributeError`. A list may
     also hold non-dicts.
     """
     offers = node.get("offers")
@@ -1004,7 +1025,7 @@ def parse_product(html: str, base_url: str) -> Optional[Product]:
     JSON-LD is primary where it exists — on a priced locale it carries the
     price, the currency, the sku and the canonical offer URL, and
     `offers.priceCurrency` is a FACT the DOM is not allowed to overwrite
-    (CLAUDE.md §4). On `int/en` and `ru` there is no JSON-LD at all and no
+    On `int/en` and `ru` there is no JSON-LD at all and no
     price to read, so the DOM supplies name, size and breadcrumb and the row
     comes out with `price=None` rather than not at all.
     """
@@ -1057,8 +1078,7 @@ def parse_product(html: str, base_url: str) -> Optional[Product]:
             original = list_price
 
     url = (_clean(offer.get("url")) or canonical_url or base_url)
-    # `sku` may be absent from an otherwise-valid Product block (CLAUDE.md
-    # §4's last shape), so `mpn` and then the URL id are the fallbacks.
+    # `sku` may be absent from an otherwise-valid Product block, so `mpn` and then the URL id are the fallbacks.
     sku = None
     if node:
         sku = _clean(node.get("sku")) or _clean(node.get("mpn"))

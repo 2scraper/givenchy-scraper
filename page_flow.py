@@ -23,8 +23,8 @@ disallows both parameters (`*?start=*`, `*sz*`) — so `product_parser.
 page_url` returns its input unchanged and a listing run is one fetch. See
 that function's comment for what covers a whole locale instead.
 
-That makes CLAUDE.md §7's layer 3 — "this page added no new sku" — the only
-terminating condition in play, which is the layer the family trusts most: a
+That makes "this page added no new sku" the only terminating condition in
+play, which is the most trustworthy one: a
 missing link is a property of markup, an exhausted listing is a property of
 the catalogue.
 
@@ -33,6 +33,8 @@ What a page can answer
     content    parse it
     blocked    a network- or vendor-level refusal before any content arrived
     captcha    a challenge widget — the paid path
+    not_found  the address does not exist (HTTP 404/410, or the site's own
+               error page). Terminal: not retried, not a block.
     empty      a real page with nothing to parse on it. NOT hypothetical
                here and NOT a fault: `/es/.../sets/` and `/it/.../sets/` are
                both served, both 200, and both list zero products (measured
@@ -155,13 +157,13 @@ def wait_for_count(count: Callable[[str], int], sleep: Callable[[int], None],
 # change the exit code. A short final page is a correct answer (measured:
 # both paginated listings return exactly 25 rows per full page, so a last
 # page of a handful is expected, not a fault) -- what this catches is the
-# case CLAUDE.md's own family lessons warn about: a page beyond the site's
+# case worth warning about: a page beyond the site's
 # real depth, or a markup regression, coming back with only a few rows
 # instead of a clean "no new products" the sku-freshness check would have
 # caught outright. This repo deliberately does NOT add a numeric PAGE_CAP
 # (as catawiki-scraper does) on top of this: the sku-based "no new rows"
 # stop condition already terminates on DATA rather than a guessed page
-# count, which is the family's own stated preference (CLAUDE.md §7) -- a
+# count -- a
 # hardcoded cap here would be redundant insurance for a failure mode this
 # repo's fresher, sku-driven check already covers.
 THIN_PAGE_RATIO = 0.4
@@ -178,7 +180,7 @@ def is_thin_page(row_count: int, first_page_count: int) -> bool:
 # each of the twelve larger `us` captures -- 291 of 291 tiles outside the
 # showcase locales. So coverage below this floor is a parsing regression to
 # flag, not the site's own doing, and the floor sits at the family's own 90%
-# convention (CLAUDE.md §4) rather than lower.
+# convention rather than lower.
 #
 # It must NOT be applied to a showcase locale. `/int/en/` and `/ru/` render
 # no price container at all (17 of 17 and 9 of 9 tiles), so 0% coverage
@@ -194,8 +196,7 @@ PRICE_COVERAGE_FLOOR = 0.90
 # The Akamai `sec-cpt` interstitial this site served on 2026-09-18 ships its
 # own `location.reload(true)`, fired when its challenge XHR returns — so the
 # page is asking to be waited for, and reporting it 0.4s after the fetch is
-# the false exit 3 CLAUDE.md §6 lists as this family's cheapest open
-# improvement. Paying that debt here, for the one challenge this site was
+# a false exit 3. Waiting is done here, for the one challenge this site was
 # actually measured serving.
 #
 # Budget and poll are deliberately separate from the captcha solver's
@@ -284,14 +285,14 @@ def classify(html: Optional[str], *, status: Optional[int] = None,
 
     Keyword-only after `html` on purpose: `classify(html, status, url)` with
     `status` positional is the exact signature that crashed two of three
-    engines in a sibling repo on their first fetch (§17, check 1), because a
+    engines in a sibling repo on their first fetch, because a
     caller wrote `classify(html, url=...)` and bound `url` to `status`.
     """
     return detect_page_state(html or "", status=status, url=url, headers=headers)
 
 
 # What each state means for the run. Kept as data, not as three copies of an
-# if-chain, for the reason CLAUDE.md gives: an engine cannot then quietly
+# if-chain, so that an engine cannot then quietly
 # disagree with its twins about whether a page is worth retrying or paying
 # for.
 STATE_POLICY = {
@@ -301,7 +302,43 @@ STATE_POLICY = {
     # NOT retried: a served category that genuinely lists nothing is a correct
     # answer to the question that was asked.
     "empty": {"retry": False, "solve": False, "blocked": False},
+    # NOT retried and NOT blocked: the address does not exist (HTTP 404/410,
+    # or the site's own error page). The run stops with stop_reason
+    # `not_found` instead of reporting a block or an empty category.
+    "not_found": {"retry": False, "solve": False, "blocked": False},
 }
+
+
+# How many PAID captcha solves one page may buy, across every call site and
+# every retry or exit rotation for that page. Measured 2026-10-14 before this
+# existed: with a three-exit pool and --proxy-block-retries 2, one page
+# reached the solver three times, because the captcha handler runs once per
+# exit and nothing counted. A fresh exit is a reason to re-fetch, not a fresh
+# allowance, so the budget is created once per page and never reset.
+SOLVES_PER_PAGE = 1
+
+
+class SolveBudget:
+    """The per-page allowance of paid solves, checked BEFORE each purchase.
+
+    One object per page, shared by every captcha call site for that page in
+    an engine. `spend()` is called immediately before the solver is asked
+    for a token and refuses once the allowance is used up; a failed solve
+    still counts, because a failed task may still have been billed.
+    """
+
+    def __init__(self, limit: int = SOLVES_PER_PAGE):
+        self.limit = limit
+        self.spent = 0
+
+    def remaining(self) -> int:
+        return max(0, self.limit - self.spent)
+
+    def spend(self) -> bool:
+        if self.spent >= self.limit:
+            return False
+        self.spent += 1
+        return True
 
 
 def should_retry(state: str) -> bool:
@@ -362,28 +399,13 @@ def pagination_is_addressable(mode: str, page1_url: str,
     pagination shape turns up on some other mode later, even though no mode
     currently branches on it here.
 
-    A site can rename its own listing path without changing how pagination
-    works
-    ----------------------------------------------------------------------
-    Measured live 2026-09-12, two days after the gallery-trap
-    re-measurement above: `/statistik/neuestetransfers`'s own `<link
-    rel="next">` had moved to a DIFFERENT PATH —
-    `/transfers/neuestetransfers/statistik?page=2` — while the query string
-    was still the plain `?page=2` this function expects. Fetching BOTH the
-    old constructed URL and the new next-link agreed byte-for-byte (the same
-    25 transfer ids, 0 overlap with page 1 either way), so the site had
-    simply exposed a second path for the same listing, not changed the
-    pagination contract. The ORIGINAL version of this function compared the
-    FULL url (via `comparable()`, which keeps the path) and would have
-    called this unaddressable, silently falling back to slow link-chaining
-    for a mode that was, in fact, still perfectly addressable. So only the
-    QUERY is compared below, never the path.
-
-    The one thing still checked against the path is the gallery trap's own
-    signature: the page number encoded IN the path (`.../page/8/page/3//
-    page/2`) rather than passed as a `?page=N` query parameter. A next-link
-    shaped like that is never trusted as equivalent to a constructed URL
-    regardless of what its query string says (it usually has none at all).
+    Only the QUERY is compared, never the path: a sibling site was measured
+    exposing the same listing under a second path whose next-link carried
+    the same plain `?page=2`, and comparing full URLs would have called a
+    perfectly addressable listing unaddressable. The one thing still checked
+    against the path is a page number encoded IN it (`.../page/3/`) rather
+    than passed as a query parameter; a next-link shaped like that is never
+    trusted as equivalent to a constructed URL.
     """
     # On this site `page_url` returns its input unchanged (the listing's own
     # paging is robots-disallowed), so there IS no page 2 address to agree

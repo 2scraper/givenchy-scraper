@@ -7,8 +7,10 @@
 #   docker run --rm -v "$PWD/out:/out" givenchy-scraper \
 #     --category makeup/lips --site-locale us --out /out/givenchy_products
 #
-# Pass --proxy/--twocaptcha-key the same way as running locally, or mount a
-# .env at /app/.env -- nothing here bakes in a credential.
+# Credentials go in a mounted .env, never on the command line (argv is
+# readable by `ps` and lands in shell history):
+#   docker run --rm -v "$PWD/.env:/app/.env:ro" -v "$PWD/out:/out" ...
+# Nothing here bakes in a credential.
 FROM python:3.12-slim
 
 WORKDIR /app

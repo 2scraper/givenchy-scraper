@@ -56,8 +56,6 @@ body:
       options:
         - category
         - product
-        - transfers
-        - player
         - not applicable
     validations:
       required: true

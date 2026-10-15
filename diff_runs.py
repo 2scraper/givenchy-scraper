@@ -33,7 +33,7 @@ output_writer.Product.price_source). A category run and a product run of the
 same sku therefore read the same price through different instruments, and
 so do two category runs if the site changes a tile from a set-price block to
 a normal one. Reporting that as a price change would be reporting our own
-instrument, which is exactly the false "price changed" CLAUDE.md §8 forbids.
+instrument: a false "price changed".
 
 There is no `--price-tolerance-pct`: every row of one run comes from one
 locale and therefore one currency (`price` and `currency` are read together
@@ -210,7 +210,7 @@ def _check_comparable(args) -> bool:
     if len(set(modes.values())) > 1:
         problems.append(
             f"the two runs are different modes ({modes}). A category "
-            f"row and a transfer row carry different fields, so "
+            f"row and a product row come from different pages, so "
             f"added/removed would describe the mode change rather than the "
             f"data.")
     if not problems:
