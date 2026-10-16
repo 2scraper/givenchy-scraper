@@ -8,6 +8,12 @@ from a bill or an empty output file.
 
 ## [Unreleased]
 
+### Changed
+
+- CI only: the canary's optional paid secrets `GIVENCHY_CDP_ENDPOINT`, `GIVENCHY_PROXY` now reach it only on a new weekly
+  run (Mondays 07:37 UTC) and on a manual dispatch. The daily run keeps its
+  schedule and takes the free route without them, so it bills nothing.
+
 ## [1.1.0] — 2026-10-15
 
 > **Behaviour changes for existing users (audit of 2026-10-14):**
