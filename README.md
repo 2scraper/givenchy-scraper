@@ -1,4 +1,4 @@
-# givenchy-scraper
+# Givenchy Beauty Scraper — Makeup Products, Prices and Shades in Python
 
 [![release](https://img.shields.io/github/v/release/2scraper/givenchy-scraper?sort=semver)](https://github.com/2scraper/givenchy-scraper/releases)
 [![tests](https://github.com/2scraper/givenchy-scraper/actions/workflows/tests.yml/badge.svg)](https://github.com/2scraper/givenchy-scraper/actions/workflows/tests.yml)
@@ -7,6 +7,8 @@
 [![licence](https://img.shields.io/badge/licence-MIT-lightgrey)](LICENSE)
 [![engines](https://img.shields.io/badge/engines-Playwright%20%7C%20Selenium%20%7C%20pyppeteer%20%7C%20CDP%20%7C%20Scraper%20API-informational)](#what-it-reads)
 [![runs without an account](https://img.shields.io/badge/runs%20without%20an%20account-yes-brightgreen)](#blocks-and-what-the-paid-products-buy)
+
+**Givenchy Beauty scraper** — an open-source (MIT) Python tool that reads givenchybeauty.com category and product pages in its 11 storefront locales and writes one row per product — price, currency, shade, shade count, availability and discount — to JSON or CSV. On 2026-09-18 a local Chromium with no key and no proxy, and separately a bare GitHub Actions runner on a datacentre address, both read the `/us/makeup/lips/` listing complete with 16 rows priced. Use it for price monitoring across locales, or compare two runs with the included diff tool.
 
 Scrapes product data from **givenchybeauty.com** — a Salesforce B2C Commerce
 (Demandware) storefront — into one row per product, as JSON and CSV. Three
@@ -380,6 +382,23 @@ python3 smoke_test.py      # or: pytest
 No pytest fixtures, no network, no engine library required — the suite runs
 green with none of the three installed and reports which groups it skipped.
 Its fixtures are real captures, trimmed and scrubbed.
+
+## Guides
+
+- [How to run the 2scraper scrapers: setup, proxies, exit codes and access modes](https://2captcha.com/h/how-to-run-2scraper-open-source-scrapers) — installation, `.env`, `.meta.json` for the whole family.
+
+## Related scrapers
+
+Same CLI conventions, same output contract (one row per item, JSON or CSV, a `.meta.json` sidecar and shared exit codes):
+
+- [Home Depot scraper](https://github.com/2scraper/homedepot-scraper) — Per-store prices, stock, brands, models and ratings…
+- [Indiegogo scraper](https://github.com/2scraper/indiegogo-scraper) — Project listings, campaign pages and reward tiers
+- [Kohl's scraper](https://github.com/2scraper/kohls-scraper) — Prices, price ranges, sale and clearance labels, ratings…
+- [Maison KOSÉ scraper](https://github.com/2scraper/kose-scraper) — Kosé's Japanese online store (maison.kose.co.jp)
+- [LG scraper](https://github.com/2scraper/lg-scraper) — Every model in an lg.com category
+- [Lidl US scraper](https://github.com/2scraper/lidl-scraper) — Grocery prices, unit prices and pack sizes from lidl.com…
+
+All scrapers: [github.com/2scraper](https://github.com/2scraper) · Need another site? [Open a request](https://github.com/2scraper/.github/issues/new?title=%5BScraper%20request%5D%20)
 
 ## Licence
 
