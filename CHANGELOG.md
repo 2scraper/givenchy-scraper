@@ -10,6 +10,7 @@ from a bill or an empty output file.
 
 ### Changed
 
+- CI only: the scheduled canary now starts at 10:47 UTC (Mondays) instead of 07:37, so canaries that share one Scraping Browser profile no longer start at the same time and lock each other out.
 - CI only: the canary now runs weekly (Mondays 07:37 UTC) and on a manual dispatch, with its optional secrets `GIVENCHY_CDP_ENDPOINT`, `GIVENCHY_PROXY` passed on every run; the daily schedule is removed.
 
 ## [1.1.0] — 2026-10-15
