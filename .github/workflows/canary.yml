@@ -26,7 +26,7 @@ on:
   schedule:
     # Once a week (Mondays), off the hour, so it is not competing with everyone else's
     # on-the-hour cron jobs for runner availability.
-    - cron: "37 7 * * 1"
+    - cron: "47 10 * * 1"
   workflow_dispatch:
 
 jobs:
