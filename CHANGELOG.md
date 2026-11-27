@@ -10,6 +10,8 @@ from a bill or an empty output file.
 
 ### Changed
 
+- CI only: the offline-checks job runs on `ubuntu-24.04` instead of `ubuntu-latest`, which moved to Ubuntu 26.04, where `actions/setup-python` has no Python 3.9 build. 3.9 stays the supported floor.
+- Docker: the image installs `libatomic1` before Playwright. Recent Playwright releases' Node driver needs it to run `playwright install` at all, and the slim base image does not ship it, so the image build failed.
 - CI only: the scheduled canary now starts at 10:47 UTC (Mondays) instead of 07:37, so canaries that share one Scraping Browser profile no longer start at the same time and lock each other out.
 - CI only: the canary now runs weekly (Mondays 07:37 UTC) and on a manual dispatch, with its optional secrets `GIVENCHY_CDP_ENDPOINT`, `GIVENCHY_PROXY` passed on every run; the daily schedule is removed.
 
